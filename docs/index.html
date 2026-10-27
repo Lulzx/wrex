@@ -1,0 +1,1046 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wrex Operations Handbook</title>
+<style>
+  /* ---------- fonts (files in ./fonts, copied from the skill's assets/fonts) ---------- */
+  /* Leroy-template lettering for every drawing label. */
+  @font-face { font-family: "Routed Gothic"; src: url("fonts/routed-gothic.ttf"); unicode-range: U+0000-0030, U+0032-FFFF; }
+  @font-face { font-family: "Routed Gothic Narrow"; src: url("fonts/routed-gothic-narrow.ttf"); unicode-range: U+0000-0030, U+0032-FFFF; }
+  /* Leroy's plain "1" reads as "I" (API V1, T1). Borrow a flagged one. Delete these two
+     rules for a strictly period look on pages without versions or subscripts. */
+  @font-face { font-family: "Routed Gothic"; src: local("Helvetica Neue"), local("HelveticaNeue"), local("Arial"); unicode-range: U+0031; }
+  @font-face { font-family: "Routed Gothic Narrow"; src: local("Helvetica Neue"), local("HelveticaNeue"), local("Arial"); unicode-range: U+0031; }
+  /* IBM Selectric Letter Gothic: crew checklists only. */
+  @font-face { font-family: "Letter Gothic"; src: url("fonts/LetterGothicCode-R.ttf"); font-weight: 400; }
+  @font-face { font-family: "Letter Gothic"; src: url("fonts/LetterGothicCode-B.ttf"); font-weight: 700; }
+
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #8a8a86; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  @media print { html, body { background: none; } }
+
+  :root {
+    --ink: #000000;
+    --paper: #fbfaf5;   /* screen only; print is pure white (below) */
+    --type: "Iowan Old Style", "Iowan", Georgia, serif;
+    --leroy: "Routed Gothic Narrow", "Routed Gothic", sans-serif;
+    --selectric: "Letter Gothic", "Courier", monospace;
+  }
+  /* Must come after :root. A printed off-white tint is halftoned into dots. */
+  @media print { :root { --paper: #ffffff; } }
+
+  .page {
+    position: relative;
+    width: 210mm;
+    height: 297mm;
+    margin: 0 auto;
+    padding: 9mm 15mm 0 16mm;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--type);
+    font-size: 8pt;
+    line-height: 1.33;
+    letter-spacing: 0.055em;   /* the Selectric typewriter spacing */
+    overflow: hidden;
+  }
+
+  /* ---------- running head / foot ---------- */
+  .head { text-align: center; line-height: 1.25; }
+  .head .doc { font-weight: 700; font-size: 8.6pt; letter-spacing: 0.06em; }
+  .head .title { font-weight: 700; font-size: 8.6pt; letter-spacing: 0.08em; }
+  .head .part { margin-top: 2.2mm; font-size: 8.2pt; letter-spacing: 0.1em; }
+  .rule { height: 0; border-top: 1.5pt solid var(--ink); margin: 1.4mm -2mm 0; }
+
+  .foot { position: absolute; left: 16mm; right: 15mm; bottom: 8mm; }
+  .foot .rule { margin: 0 -2mm 1.6mm; }
+  .foot .sub { text-align: center; letter-spacing: 0.1em; font-size: 8.2pt; }
+  .foot .line { display: flex; align-items: baseline; justify-content: space-between; margin-top: 2.2mm; font-size: 8.2pt; }
+  .foot .fill { display: inline-block; border-bottom: 0.6pt solid var(--ink); text-align: center; padding: 0 1mm; font-size: 8.8pt; letter-spacing: 0.03em; }
+
+  /* ---------- section opener ---------- */
+  .opener { text-align: center; letter-spacing: 0.12em; margin: 3.4mm 0 2mm; line-height: 1.6; }
+
+  /* ---------- numbered paragraphs ---------- */
+  .para { display: grid; grid-template-columns: 19mm 1fr; position: relative; }
+  .para .num { letter-spacing: 0.08em; }
+  .para h2, .para h3 { margin: 0 0 0.8mm; font: inherit; font-weight: 400; letter-spacing: 0.08em; }
+  .para h3 { text-decoration: underline; text-underline-offset: 1.6pt; text-decoration-thickness: 0.5pt; letter-spacing: 0.06em; }
+  .para p { margin: 0 0 1mm; text-indent: 9mm; text-align: left; }
+  .para p.flush { text-indent: 0; }
+  .changebar { position: absolute; left: -9mm; width: 1.3mm; background: var(--ink); }
+  .nowrap { white-space: nowrap; }
+
+  /* ---------- figures ---------- */
+  figure { margin: 1.6mm 0 0; }
+  figure svg { display: block; width: 100%; height: auto; }
+  figcaption { text-align: center; margin-top: 0.6mm; letter-spacing: 0.07em; }
+  figcaption .n { margin-right: 3mm; }
+
+  /* SVG units are millimetres on paper: a figure 180 units wide fills the 179 mm column. */
+  svg text { font-family: var(--leroy); fill: var(--ink); letter-spacing: 0.04px; }
+  svg .o    { fill: none; stroke: var(--ink); stroke-width: 0.42; stroke-linejoin: round; stroke-linecap: round; } /* object line */
+  svg .of   { fill: var(--paper); stroke: var(--ink); stroke-width: 0.42; stroke-linejoin: round; }               /* object, opaque */
+  svg .t    { fill: none; stroke: var(--ink); stroke-width: 0.17; stroke-linecap: round; }                        /* thin detail */
+  svg .hid  { fill: none; stroke: var(--ink); stroke-width: 0.22; stroke-dasharray: 1.3 0.7; }                     /* hidden */
+  svg .cl   { fill: none; stroke: var(--ink); stroke-width: 0.16; stroke-dasharray: 5 0.8 0.9 0.8; }               /* centerline */
+  svg .cut  { fill: none; stroke: var(--ink); stroke-width: 0.5; stroke-dasharray: 5 1 1 1; }                      /* section cut */
+  svg .ld   { fill: none; stroke: var(--ink); stroke-width: 0.16; marker-end: url(#nh-leader); }                   /* leader */
+  svg .dim  { fill: none; stroke: var(--ink); stroke-width: 0.16; marker-start: url(#nh-dim); }                    /* dimension half */
+  svg .w    { fill: none; stroke: var(--ink); stroke-width: 0.3; stroke-linejoin: round; }                         /* wire */
+  svg .wa   { fill: none; stroke: var(--ink); stroke-width: 0.3; stroke-linejoin: round; marker-end: url(#nh-arrow); } /* wire with arrow */
+  svg .box  { fill: var(--paper); stroke: var(--ink); stroke-width: 0.45; }
+  svg .panel{ fill: none; stroke: var(--ink); stroke-width: 0.3; stroke-dasharray: 2 1; }
+  svg .ev   { fill: none; stroke: var(--ink); stroke-width: 0.18; stroke-dasharray: 1 0.7; }                       /* timeline event */
+  svg .vid  { fill: url(#nh-hatch); stroke: var(--ink); stroke-width: 0.35; }                                      /* hatched bar */
+  svg .aud  { fill: var(--paper); stroke: var(--ink); stroke-width: 0.35; }                                        /* plain bar */
+  svg .gap  { fill: var(--paper); stroke: var(--ink); stroke-width: 0.35; stroke-dasharray: 0.6 0.5; }             /* dotted bar */
+  svg .grain{ fill: url(#nh-dots); stroke: var(--ink); stroke-width: 0.35; }                                       /* granular, powder, fill */
+  svg .dot  { fill: var(--ink); }
+  svg .lbl   { font-size: 2.35px; }                                         /* callouts, box titles */
+  svg .lbl-s { font-size: 2.05px; }                                         /* secondary lines, wire names */
+  svg .lbl-b { font-size: 2.5px; font-family: "Routed Gothic", sans-serif; } /* view titles, big letters */
+  svg .code  { font-size: 2.4px; font-family: "Routed Gothic", sans-serif; } /* figure code, bottom right */
+
+  /* ---------- lower band: data table + notice + checklist ---------- */
+  .lower { display: grid; grid-template-columns: 1fr 64mm; column-gap: 6mm; margin-top: 2.8mm; }
+  .tcap { text-align: center; letter-spacing: 0.07em; margin: 0 0 0.8mm; }
+  table { width: 100%; border-collapse: collapse; font-size: 7.3pt; line-height: 1.2; }
+  th, td { border: 0.6pt solid var(--ink); padding: 0.35mm 1.6mm; text-align: left; vertical-align: top; font-weight: 400; }
+  thead th { text-align: center; letter-spacing: 0.1em; padding: 0.5mm 1.6mm; }
+  td.v { white-space: nowrap; }
+
+  .notice { text-align: left; margin-bottom: 1.8mm; }
+  .notice .tag { display: block; text-align: center; letter-spacing: 0.18em; font-weight: 700; text-decoration: underline; text-underline-offset: 1.6pt; text-decoration-thickness: 0.6pt; margin-bottom: 0.8mm; }
+  .notice p { margin: 0; font-size: 7.4pt; line-height: 1.28; }
+
+  .card { border: 0.8pt solid var(--ink); font-family: var(--selectric); font-size: 7.1pt; line-height: 1.3; letter-spacing: 0; }
+  .card .bar { background: var(--ink); color: var(--paper); font-weight: 700; padding: 0.5mm 1.8mm; display: flex; justify-content: space-between; }
+  .card ol { list-style: none; margin: 0; padding: 0.8mm 1.8mm 1mm; }
+  .card li { display: grid; grid-template-columns: 3.2mm 1fr; white-space: pre; }
+
+  /* black thumb tab, bleeds off the trim edge */
+  .tab { position: absolute; right: 0; top: 112mm; width: 8.5mm; height: 17mm; background: var(--ink); color: var(--paper);
+    font-family: "Routed Gothic", sans-serif; font-size: 8pt; letter-spacing: 0.08em; display: flex; align-items: center; justify-content: center; }
+  .page { break-after: page; }
+  .page:last-of-type { break-after: auto; }
+  @media screen { .page + .page { margin-top: 6mm; } }
+  .head .part { margin-top: 1.2mm; }
+  .foot .line { justify-content: space-between; }
+  .op { display: inline-block; width: 0.42em; height: 0.42em; border: 0.7pt solid currentColor; transform: rotate(45deg); margin: 0 0.3em; vertical-align: 0.1em; }
+</style>
+</head>
+<body>
+
+<!-- Shared drawing defs: every figure on the page uses these ids. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="nh-leader" viewBox="0 0 6 4" refX="5.6" refY="2" markerWidth="2.1" markerHeight="1.05" markerUnits="userSpaceOnUse" orient="auto" preserveAspectRatio="none"><path d="M0,0 L6,2 L0,4 Z" fill="#000"/></marker>
+    <marker id="nh-arrow" viewBox="0 0 6 4" refX="5.6" refY="2" markerWidth="2.4" markerHeight="1.3" markerUnits="userSpaceOnUse" orient="auto" preserveAspectRatio="none"><path d="M0,0 L6,2 L0,4 Z" fill="#000"/></marker>
+    <marker id="nh-dim" viewBox="0 0 6 4" refX="0" refY="2" markerWidth="2.2" markerHeight="0.95" markerUnits="userSpaceOnUse" orient="auto" preserveAspectRatio="none"><path d="M6,0 L0,2 L6,4 Z" fill="#000"/></marker>
+    <pattern id="nh-hatch" width="1.1" height="1.1" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="1.1" stroke="#000" stroke-width="0.2"/></pattern>
+    <pattern id="nh-bp" width="1.4" height="1.4" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><rect width="0.7" height="1.4" fill="#000"/></pattern>
+    <pattern id="nh-dots" width="1.3" height="1.3" patternUnits="userSpaceOnUse"><circle cx="0.32" cy="0.32" r="0.15" fill="#000"/><circle cx="0.97" cy="0.97" r="0.15" fill="#000"/></pattern>
+  </defs>
+</svg>
+
+<!-- ================================================================ PAGE 1 -->
+<div class="page">
+  <header class="head">
+    <div class="title">WREX OPERATIONS HANDBOOK</div>
+    <div class="part">VERSION 0.6</div>
+    <div class="rule"></div>
+  </header>
+  <div class="tab" style="top:40mm">OVR</div>
+
+  <div class="opener">SECTION 1<br>OVERVIEW</div>
+
+  <section class="para">
+    <div class="num">1.1</div>
+    <div>
+      <h2>INTRODUCTION.</h2>
+      <p>Wrex compiles each fold, scan and treefold into a parallel plan or a sequential loop. A loop composes step functions, and composition is associative. When those functions stay inside one family closed under cheap composition (a representation), the loop runs as a parallel scan with the sequential answer, bit for bit, first trap included <span class="nowrap">(figure 1-1).</span></p>
+    </div>
+  </section>
+
+  <figure>
+    <svg viewBox="0 0 180 46" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A loop as a chain of steps and as a balanced composition">
+      <text class="lbl-s" x="14" y="3.4">SEQUENTIAL: STEP(S, X) APPLIED ONE INPUT AT A TIME</text>
+      <circle class="of" cx="6" cy="8" r="2.6"/><text class="lbl-s" x="6" y="8.75" text-anchor="middle">S0</text>
+      <line class="wa" x1="8.6" y1="8" x2="13.6" y2="8"/>
+      <g id="chain"></g>
+      <circle class="of" cx="172" cy="8" r="2.6"/><text class="lbl-s" x="172" y="8.75" text-anchor="middle">S8</text>
+
+      <text class="lbl-s" x="2" y="17.6">PARALLEL: ρ(X) COMPOSED PAIRWISE,</text>
+      <text class="lbl-s" x="2" y="20.6">IN ANY GROUPING, DEPTH LOG2 N</text>
+      <path class="of" d="M3.6,23 L5.2,24.6 L3.6,26.2 L2,24.6 Z"/><text class="lbl-s" x="7" y="25.3">COMPOSE</text>
+      <g id="tree"></g>
+
+      <rect class="box" x="130" y="18" width="38" height="6"/>
+      <text class="lbl" x="149" y="21.9" text-anchor="middle">EV(R, S0) = S8</text>
+      <line class="wa" x1="88.1" y1="21" x2="129.6" y2="21"/>
+      <text class="lbl-s" x="96" y="19.8">R, ONE ELEMENT</text>
+    </svg>
+    <script>
+      ;(function () {
+        const ns = 'http://www.w3.org/2000/svg', chain = document.getElementById('chain'), tree = document.getElementById('tree')
+        const el = (g, tag, a, txt) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt) e.textContent = txt; g.append(e); return e }
+        const dia = (x, y) => el(tree, 'path', { class: 'of', d: `M${x},${y - 1.6} L${x + 1.6},${y} L${x},${y + 1.6} L${x - 1.6},${y} Z` })
+        const cx = [...Array(8).keys()].map(i => 20 + i * 19)
+        cx.forEach((x, i) => {
+          el(chain, 'rect', { class: 'box', x: x - 6, y: 5, width: 12, height: 6 })
+          el(chain, 'text', { class: 'lbl', x, y: 8.9, 'text-anchor': 'middle' }, 'X' + (i + 1))
+          el(chain, 'line', { class: 'wa', x1: x + 6, y1: 8, x2: i < 7 ? x + 12.6 : 168.8, y2: 8 })
+          el(tree, 'rect', { class: 'box', x: x - 7, y: 39, width: 14, height: 5 })
+          el(tree, 'text', { class: 'lbl', x, y: 42.4, 'text-anchor': 'middle' }, 'ρ(X' + (i + 1) + ')')
+        })
+        let level = cx, y = 39, ys = [33, 27, 21]
+        ys.forEach(ny => {
+          const next = []
+          for (let i = 0; i < level.length; i += 2) {
+            const nx = (level[i] + level[i + 1]) / 2; next.push(nx)
+            const top = y === 39 ? 39 : y - 1.6
+            el(tree, 'line', { class: 'o', x1: level[i], y1: top, x2: nx - 1.1, y2: ny + 1.1 })
+            el(tree, 'line', { class: 'o', x1: level[i + 1], y1: top, x2: nx + 1.1, y2: ny + 1.1 })
+          }
+          next.forEach(nx => dia(nx, ny)); level = next; y = ny
+        })
+      })()
+    </script>
+    <figcaption><span class="n">Figure 1-1.</span>A Loop as a Chain and as a Balanced Composition</figcaption>
+  </figure>
+
+  <section class="para" style="margin-top:2.2mm">
+    <div class="num">1.2</div>
+    <div>
+      <h2>FUNCTIONAL DESCRIPTION.</h2>
+      <p>The type checker hands each loop site to representation inference, which normalizes the step body into ring or lattice normal form and matches it against families F0 through F6 (section 2). A site with no match runs sequentially, and <span class="nowrap">“wrex explain”</span> names the smallest subterm responsible. A certified site goes to plan selection, which evaluates the cost model on the actual input size n (section 3, figure 1-2).</p>
+    </div>
+  </section>
+
+  <section class="para">
+    <div class="num">1.2.1</div>
+    <div>
+      <h3>Law L3 Check.</h3>
+      <p class="flush">Families prove associativity and identity once; only L3, <span class="nowrap">ev(ρ(x), s) = step(s, x)</span>, depends on the program. Both sides reduce to canonical normal forms, so an inference error costs speed, never correctness.</p>
+    </div>
+  </section>
+
+  <section class="para">
+    <div class="num">1.2.2</div>
+    <div>
+      <h3>Rejection Report.</h3>
+      <p class="flush">For the logistic step r·s·(100 − s), <span class="nowrap">“wrex explain”</span> prints “The new value contains `s * s`, which has degree 2 in the state” and the loop runs sequentially.</p>
+    </div>
+  </section>
+
+  <figure>
+    <svg viewBox="0 0 180 63.5" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Wrex compiler and runtime functional diagram">
+      <rect class="panel" x="1.5" y="2.5" width="106" height="60"/>
+      <text class="lbl-s" x="3.4" y="5.6">COMPILE TIME</text>
+      <rect class="box" x="5" y="10" width="22" height="11"/>
+      <text class="lbl" x="16" y="14.8" text-anchor="middle">SOURCE FILE</text>
+      <text class="lbl-s" x="16" y="17.8" text-anchor="middle">.WRX</text>
+      <line class="wa" x1="27" y1="15.5" x2="34.6" y2="15.5"/>
+      <rect class="box" x="35" y="10" width="20" height="11"/>
+      <text class="lbl" x="45" y="14.8" text-anchor="middle">PARSER</text>
+      <text class="lbl-s" x="45" y="17.8" text-anchor="middle">LEXER, AST</text>
+      <line class="wa" x1="55" y1="15.5" x2="62.6" y2="15.5"/>
+      <rect class="box" x="63" y="10" width="24" height="11"/>
+      <text class="lbl" x="75" y="14.8" text-anchor="middle">TYPE CHECK</text>
+      <text class="lbl-s" x="75" y="17.8" text-anchor="middle">STATE TYPES</text>
+      <line class="wa" x1="75" y1="21" x2="75" y2="28.6"/>
+      <text class="lbl-s" x="76.6" y="25.8">LOOP SITE</text>
+      <path class="box" d="M12,29 L12,40.4 A10,1.8 0 0 0 32,40.4 L32,29"/>
+      <ellipse class="box" cx="22" cy="29" rx="10" ry="1.8"/>
+      <text class="lbl-b" x="22" y="35" text-anchor="middle">FAMILIES</text>
+      <text class="lbl-s" x="22" y="38" text-anchor="middle">F0 – F6</text>
+      <line class="wa" x1="32" y1="35" x2="57.6" y2="35"/>
+      <text class="lbl-s" x="34.4" y="33.8">CANDIDATES</text>
+      <rect class="box" x="58" y="29" width="34" height="12"/>
+      <text class="lbl" x="75" y="33.2" text-anchor="middle">REPRESENTATION</text>
+      <text class="lbl" x="75" y="36" text-anchor="middle">INFERENCE</text>
+      <text class="lbl-s" x="75" y="39.2" text-anchor="middle">RING + LATTICE NF</text>
+      <line class="wa" x1="75" y1="41" x2="75" y2="47.6"/>
+      <text class="lbl-s" x="76.6" y="45.2">PROPOSAL</text>
+      <rect class="box" x="58" y="48" width="34" height="11"/>
+      <text class="lbl" x="75" y="52.6" text-anchor="middle">L3 CHECKER</text>
+      <text class="lbl-s" x="75" y="55.8" text-anchor="middle">NORMAL FORMS EQUAL</text>
+      <line class="wa" x1="58" y1="53.5" x2="32.6" y2="53.5"/>
+      <text class="lbl-s" x="34.4" y="52.3">NO REPRESENTATION</text>
+      <rect class="box" x="6" y="48" width="26" height="11"/>
+      <text class="lbl" x="19" y="52.6" text-anchor="middle">SEQUENTIAL</text>
+      <text class="lbl-s" x="19" y="55.8" text-anchor="middle">EXPLAIN: SUBTERM</text>
+      <line class="wa" x1="92" y1="53.5" x2="114.6" y2="53.5"/>
+      <text class="lbl-s" x="94" y="52.3">CERTIFICATE</text>
+
+      <rect class="panel" x="111.5" y="2.5" width="67" height="60"/>
+      <text class="lbl-s" x="113.4" y="5.6">RUN TIME</text>
+      <text class="lbl" x="114" y="12">BACKENDS</text>
+      <text class="lbl-s" x="114" y="15.4">INTERPRETER</text>
+      <text class="lbl-s" x="114" y="18.4">C CODEGEN, PTHREADS</text>
+      <text class="lbl-s" x="114" y="21.4">GPU, TINYGRAD</text>
+      <path class="box" d="M119,29.4 L119,39.2 A10,1.8 0 0 0 139,39.2 L139,29.4"/>
+      <ellipse class="box" cx="129" cy="29.4" rx="10" ry="1.8"/>
+      <text class="lbl-b" x="129" y="34.8" text-anchor="middle">CALIBRATION</text>
+      <text class="lbl-s" x="129" y="37.8" text-anchor="middle">MEASURED COSTS</text>
+      <line class="wa" x1="129" y1="41" x2="129" y2="47.6"/>
+      <rect class="box" x="115" y="48" width="28" height="11"/>
+      <text class="lbl" x="129" y="52.6" text-anchor="middle">PLAN SELECT</text>
+      <text class="lbl-s" x="129" y="55.8" text-anchor="middle">GUARD ON INPUT N</text>
+      <line class="w" x1="143" y1="53.5" x2="150" y2="53.5"/>
+      <line class="w" x1="150" y1="53.5" x2="150" y2="10.5"/>
+      <circle class="dot" cx="150" cy="20.5" r="0.55"/>
+      <circle class="dot" cx="150" cy="30.5" r="0.55"/>
+      <circle class="dot" cx="150" cy="40.5" r="0.55"/>
+      <circle class="dot" cx="150" cy="50.5" r="0.55"/>
+      <line class="wa" x1="150" y1="10.5" x2="153.6" y2="10.5"/>
+      <line class="wa" x1="150" y1="20.5" x2="153.6" y2="20.5"/>
+      <line class="wa" x1="150" y1="30.5" x2="153.6" y2="30.5"/>
+      <line class="wa" x1="150" y1="40.5" x2="153.6" y2="40.5"/>
+      <line class="wa" x1="150" y1="50.5" x2="153.6" y2="50.5"/>
+      <rect class="box" x="154" y="7" width="23" height="7"/>
+      <text class="lbl" x="165.5" y="10.2" text-anchor="middle">SEQ</text>
+      <text class="lbl-s" x="165.5" y="12.9" text-anchor="middle">BASELINE LOOP</text>
+      <rect class="box" x="154" y="17" width="23" height="7"/>
+      <text class="lbl" x="165.5" y="20.2" text-anchor="middle">PARSCAN</text>
+      <text class="lbl-s" x="165.5" y="22.9" text-anchor="middle">3-PHASE BLOCKED</text>
+      <rect class="box" x="154" y="27" width="23" height="7"/>
+      <text class="lbl" x="165.5" y="30.2" text-anchor="middle">PARFOLD</text>
+      <text class="lbl-s" x="165.5" y="32.9" text-anchor="middle">BALANCED REDUCE</text>
+      <rect class="box" x="154" y="37" width="23" height="7"/>
+      <text class="lbl" x="165.5" y="40.2" text-anchor="middle">FORKJOIN</text>
+      <text class="lbl-s" x="165.5" y="42.9" text-anchor="middle">TREE, PER NODE</text>
+      <rect class="box" x="154" y="47" width="23" height="7"/>
+      <text class="lbl" x="165.5" y="50.2" text-anchor="middle">CONTRACT</text>
+      <text class="lbl-s" x="165.5" y="52.9" text-anchor="middle">TREE CONTEXTS</text>
+    </svg>
+    <figcaption><span class="n">Figure 1-2.</span>Compiler and Runtime Functional Diagram</figcaption>
+  </figure>
+
+  <div class="lower">
+    <div>
+      <section class="para">
+        <div class="num">1.3</div>
+        <div><h2>COMMANDS.</h2></div>
+      </section>
+      <div class="tcap">Table 1-1. Command Summary</div>
+      <table>
+        <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td class="v">wrex run file.wrx</td><td>Compile and run, plans chosen per site</td></tr>
+          <tr><td class="v">wrex check</td><td>Type check and infer families</td></tr>
+          <tr><td class="v">wrex explain</td><td>Family, L3 status and plan per loop</td></tr>
+          <tr><td class="v">wrex test</td><td>Family laws and differential tests</td></tr>
+          <tr><td class="v">wrex fuzz --iters=N</td><td>Random programs; all plans must agree</td></tr>
+          <tr><td class="v">wrex bench [--c] [--gpu]</td><td>Benchmark suite timings, every plan</td></tr>
+          <tr><td class="v">wrex codegen -o out.c</td><td>Standalone C with pthreads</td></tr>
+          <tr><td class="v">wrex calibrate</td><td>Measure cost-model constants</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="notice">
+        <span class="tag">NOTE</span>
+        <p>A representation existing and a representation being worth it are separate claims. The plan guard settles the second on the real n.</p>
+      </div>
+      <div class="card">
+        <div class="bar"><span>CERTIFY A LOOP</span><span>DEV</span></div>
+        <ol>
+          <li><span>1</span><span>WREX CHECK - run on file.wrx</span></li>
+          <li><span>2</span><span>WREX EXPLAIN - run</span></li>
+          <li><span></span><span>  √ family - F0..F6, not none</span></li>
+          <li><span>3</span><span>WREX TEST - run (laws, diff)</span></li>
+          <li><span></span><span>  √ all plans - agree</span></li>
+          <li><span>4</span><span>WREX FUZZ - --iters=200</span></li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <div class="rule"></div>
+    <div class="sub">OVERVIEW</div>
+    <div class="line"><span>Wrex 0.6</span><span>28 October 2026</span><span>Page 1 of 4</span></div>
+  </footer>
+</div>
+
+<!-- ================================================================ PAGE 2 -->
+<div class="page">
+  <header class="head">
+    <div class="title">WREX OPERATIONS HANDBOOK</div>
+    <div class="part">VERSION 0.6</div>
+    <div class="rule"></div>
+  </header>
+  <div class="tab" style="top:75mm">FAM</div>
+
+  <div class="opener">SECTION 2<br>REPRESENTATION FAMILIES</div>
+
+  <section class="para">
+    <div class="num">2.1</div>
+    <div>
+      <h2>INTRODUCTION.</h2>
+      <p>A representation is a tuple (R, <span class="op"></span>, ι, ρ, ev). R holds summaries of step functions, ρ maps an input to one, <span class="op"></span> composes two (first left, then right) and ev applies one to a state. Wrex ships seven fixed families. Their associativity and identity laws hold once for the family; only L3 depends on the program <span class="nowrap">(figure 2-1).</span></p>
+    </div>
+  </section>
+
+  <figure>
+    <svg viewBox="0 0 180 68" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The seven representation families">
+      <!-- cell frames -->
+      <rect class="t" x="0.5" y="0.5" width="44" height="33"/>
+      <rect class="t" x="45.5" y="0.5" width="44" height="33"/>
+      <rect class="t" x="90.5" y="0.5" width="44" height="33"/>
+      <rect class="t" x="135.5" y="0.5" width="44" height="33"/>
+      <rect class="t" x="0.5" y="34.5" width="59" height="33"/>
+      <rect class="t" x="60.5" y="34.5" width="59" height="33"/>
+      <rect class="t" x="120.5" y="34.5" width="59" height="33"/>
+
+      <!-- F0 -->
+      <text class="lbl-b" x="2.5" y="4.8">F0 DIRECT MONOID</text>
+      <text class="lbl" x="9" y="18.3" text-anchor="end">S</text>
+      <line class="w" x1="10" y1="17.5" x2="19.4" y2="17.5"/>
+      <circle class="of" cx="22" cy="17.5" r="2.6"/>
+      <line class="t" x1="20.6" y1="17.5" x2="23.4" y2="17.5"/><line class="t" x1="22" y1="16.1" x2="22" y2="18.9"/>
+      <line class="wa" x1="24.6" y1="17.5" x2="34" y2="17.5"/>
+      <text class="lbl" x="35" y="18.3">S′</text>
+      <text class="lbl" x="22" y="10" text-anchor="middle">G(X)</text>
+      <line class="wa" x1="22" y1="11" x2="22" y2="14.6"/>
+      <text class="lbl-s" x="2.5" y="28">S + G(X), ANY LISTED ASSOC. OP</text>
+      <text class="lbl-s" x="2.5" y="31.2">COST 1</text>
+
+      <!-- F1 -->
+      <text class="lbl-b" x="47.5" y="4.8">F1 AFFINE</text>
+      <polyline class="t" points="53,8 53,24 86,24"/>
+      <line class="w" x1="53" y1="20.5" x2="84" y2="9.5"/>
+      <text class="lbl-s" x="51.6" y="21.2" text-anchor="end">B</text>
+      <text class="lbl-s" x="86" y="22.6" text-anchor="end">S</text>
+      <text class="lbl-s" x="72" y="13" text-anchor="end">SLOPE A</text>
+      <text class="lbl-s" x="47.5" y="28">S → A·S + B OVER INT, I64, U64</text>
+      <text class="lbl-s" x="47.5" y="31.2">COST 3</text>
+
+      <!-- F2 -->
+      <text class="lbl-b" x="92.5" y="4.8">F2 LINEAR</text>
+      <path class="o" d="M102,8 L100.5,8 L100.5,23 L102,23"/>
+      <path class="o" d="M123,8 L124.5,8 L124.5,23 L123,23"/>
+      <line class="t" x1="116.2" y1="8.6" x2="116.2" y2="22.4"/>
+      <line class="t" x1="101.2" y1="18.4" x2="123.8" y2="18.4"/>
+      <g class="lbl-s" text-anchor="middle">
+        <text x="105.2" y="12">A11</text><text x="111.4" y="12">A12</text><text x="120.3" y="12">B1</text>
+        <text x="105.2" y="16.4">A21</text><text x="111.4" y="16.4">A22</text><text x="120.3" y="16.4">B2</text>
+        <text x="105.2" y="21.6">0</text><text x="111.4" y="21.6">0</text><text x="120.3" y="21.6">1</text>
+      </g>
+      <text class="lbl-s" x="92.5" y="28">V → A·V + B, RING OR MAX/MIN-PLUS</text>
+      <text class="lbl-s" x="92.5" y="31.2">COST (K + 1)³, K ≤ 8</text>
+
+      <!-- F3 -->
+      <text class="lbl-b" x="137.5" y="4.8">F3 SHIFTED CLAMP</text>
+      <polyline class="t" points="143,8 143,24 177,24"/>
+      <polyline class="w" points="143,20.5 151,20.5 161,10.5 175,10.5"/>
+      <text class="lbl-s" x="141.6" y="21.2" text-anchor="end">L</text>
+      <text class="lbl-s" x="141.6" y="11.2" text-anchor="end">H</text>
+      <line class="ev" x1="143" y1="10.5" x2="160" y2="10.5"/>
+      <text class="lbl-s" x="177" y="22.6" text-anchor="end">S</text>
+      <text class="lbl-s" x="137.5" y="28">S → MIN(H, MAX(L, S + A))</text>
+      <text class="lbl-s" x="137.5" y="31.2">COST 6</text>
+
+      <!-- F4 -->
+      <text class="lbl-b" x="2.5" y="38.8">F4 FINITE TABLE</text>
+      <text class="lbl-s" x="14" y="42.4" text-anchor="middle">Q</text>
+      <text class="lbl-s" x="40" y="42.4" text-anchor="middle">Q′</text>
+      <circle class="dot" cx="14" cy="45" r="0.7"/><circle class="dot" cx="14" cy="50" r="0.7"/><circle class="dot" cx="14" cy="55" r="0.7"/>
+      <circle class="dot" cx="40" cy="45" r="0.7"/><circle class="dot" cx="40" cy="50" r="0.7"/><circle class="dot" cx="40" cy="55" r="0.7"/>
+      <line class="wa" x1="15.2" y1="45.2" x2="38.8" y2="49.8"/>
+      <line class="wa" x1="15.2" y1="50" x2="38.8" y2="50"/>
+      <line class="wa" x1="15.2" y1="54.8" x2="38.8" y2="45.2"/>
+      <text class="lbl-s" x="44" y="50.7">ONE ROW</text>
+      <text class="lbl-s" x="44" y="53.7">PER STATE</text>
+      <text class="lbl-s" x="2.5" y="62">Q → Q, TABULATED; WHOLE STATE FINITE</text>
+      <text class="lbl-s" x="2.5" y="65.2">COST |Q|, |Q| ≤ 256</text>
+
+      <!-- F5 -->
+      <text class="lbl-b" x="62.5" y="38.8">F5 WREATH PRODUCT</text>
+      <circle class="of" cx="74" cy="46" r="3.4"/><text class="lbl-s" x="74" y="46.75" text-anchor="middle">Q1</text>
+      <circle class="of" cx="102" cy="46" r="3.4"/><text class="lbl-s" x="102" y="46.75" text-anchor="middle">Q2</text>
+      <line class="wa" x1="77.4" y1="45" x2="98.4" y2="45"/>
+      <line class="wa" x1="98.6" y1="47" x2="77.6" y2="47"/>
+      <text class="lbl-s" x="88" y="43.6" text-anchor="middle">δ(Q, X)</text>
+      <line class="t" x1="74" y1="49.4" x2="74" y2="52"/>
+      <line class="t" x1="102" y1="49.4" x2="102" y2="52"/>
+      <rect class="box" x="66" y="52" width="16" height="4.6"/><text class="lbl-s" x="74" y="55.1" text-anchor="middle">PAYLOAD R</text>
+      <rect class="box" x="94" y="52" width="16" height="4.6"/><text class="lbl-s" x="102" y="55.1" text-anchor="middle">PAYLOAD R</text>
+      <text class="lbl-s" x="62.5" y="62">(Q, V): FINITE CONTROL, PAYLOAD IN R</text>
+      <text class="lbl-s" x="62.5" y="65.2">COST |Q| × COST(R)</text>
+
+      <!-- F6 -->
+      <text class="lbl-b" x="122.5" y="38.8">F6 PRODUCT</text>
+      <text class="lbl" x="126.6" y="50.3" text-anchor="end">S</text>
+      <line class="w" x1="127.4" y1="49.5" x2="131" y2="49.5"/>
+      <line class="w" x1="131" y1="44.5" x2="131" y2="54.5"/>
+      <circle class="dot" cx="131" cy="49.5" r="0.55"/>
+      <line class="wa" x1="131" y1="44.5" x2="137.6" y2="44.5"/>
+      <line class="wa" x1="131" y1="54.5" x2="137.6" y2="54.5"/>
+      <rect class="box" x="138" y="42" width="24" height="5"/><text class="lbl-s" x="150" y="45.3" text-anchor="middle">PART 1, E.G. F1</text>
+      <rect class="box" x="138" y="52" width="24" height="5"/><text class="lbl-s" x="150" y="55.3" text-anchor="middle">PART 2, E.G. F3</text>
+      <line class="w" x1="162" y1="44.5" x2="167" y2="44.5"/>
+      <line class="w" x1="162" y1="54.5" x2="167" y2="54.5"/>
+      <line class="w" x1="167" y1="44.5" x2="167" y2="54.5"/>
+      <circle class="dot" cx="167" cy="49.5" r="0.55"/>
+      <line class="wa" x1="167" y1="49.5" x2="172.6" y2="49.5"/>
+      <text class="lbl" x="173.4" y="50.3">S′</text>
+      <text class="lbl-s" x="122.5" y="62">INDEPENDENT COMPONENTS</text>
+      <text class="lbl-s" x="122.5" y="65.2">COST = SUM OF PARTS</text>
+    </svg>
+    <figcaption><span class="n">Figure 2-1.</span>Representation Family Catalog</figcaption>
+  </figure>
+
+  <section class="para" style="margin-top:2.2mm">
+    <div class="num">2.2</div>
+    <div>
+      <h2>FUNCTIONAL DESCRIPTION.</h2>
+      <p>F1 is preferred over F2 when both apply, because its compose is cheaper. F5 splits the state into a finite control part, which depends only on itself and the input, and a payload whose update lies in a family for each fixed control state. A word counter looks inherently sequential, yet its control has two states and its counter is affine in each <span class="nowrap">(figure 2-2, detail A).</span></p>
+    </div>
+  </section>
+
+  <section class="para">
+    <div class="num">2.2.1</div>
+    <div>
+      <h3>Clamp Composition.</h3>
+      <p class="flush">Two clamps make one: <span class="nowrap">(a₁, l₁, h₁) <span class="op"></span> (a₂, l₂, h₂) = (a₁ + a₂, min(max(l₁ + a₂, l₂), h₂), max(min(h₁ + a₂, h₂), l₂))</span>, so saturating counters and running maxima scan at six operations per merge.</p>
+    </div>
+  </section>
+
+  <section class="para">
+    <div class="num">2.2.2</div>
+    <div>
+      <h3>Floating Point.</h3>
+      <p class="flush">No family admits f64 state, because floating-point addition is not associative. An f64 fold runs sequentially unless its function carries @reassoc (section 3).</p>
+    </div>
+  </section>
+
+  <figure>
+    <svg viewBox="0 0 180 46" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Clamp composition chart and word count control automaton">
+      <polyline class="w" points="20,3 20,38 102,38"/>
+      <g class="t">
+        <line x1="20" y1="38" x2="20" y2="39.2"/><line x1="31.43" y1="38" x2="31.43" y2="39.2"/><line x1="42.86" y1="38" x2="42.86" y2="39.2"/><line x1="54.29" y1="38" x2="54.29" y2="39.2"/>
+        <line x1="65.71" y1="38" x2="65.71" y2="39.2"/><line x1="77.14" y1="38" x2="77.14" y2="39.2"/><line x1="88.57" y1="38" x2="88.57" y2="39.2"/><line x1="100" y1="38" x2="100" y2="39.2"/>
+        <line x1="20" y1="31.2" x2="18.8" y2="31.2"/><line x1="20" y1="24.4" x2="18.8" y2="24.4"/><line x1="20" y1="17.6" x2="18.8" y2="17.6"/><line x1="20" y1="10.8" x2="18.8" y2="10.8"/><line x1="20" y1="4" x2="18.8" y2="4"/>
+      </g>
+      <g class="lbl-s" text-anchor="middle">
+        <text x="20" y="41.4">−4</text><text x="31.43" y="41.4">−2</text><text x="42.86" y="41.4">0</text><text x="54.29" y="41.4">2</text>
+        <text x="65.71" y="41.4">4</text><text x="77.14" y="41.4">6</text><text x="88.57" y="41.4">8</text><text x="100" y="41.4">10</text>
+      </g>
+      <g class="lbl-s" text-anchor="end">
+        <text x="18.2" y="31.9">0</text><text x="18.2" y="25.1">2</text><text x="18.2" y="18.3">4</text><text x="18.2" y="11.5">6</text><text x="18.2" y="4.7">8</text>
+      </g>
+      <text class="lbl-s" x="61" y="44.8" text-anchor="middle">INPUT STATE S</text>
+      <text class="lbl-s" transform="translate(13 21) rotate(-90)" text-anchor="middle">OUTPUT STATE</text>
+
+      <polyline class="hid" points="20,31.2 31.43,31.2 65.71,10.8 100,10.8"/>
+      <polyline class="w" style="stroke-width:0.5" points="20,27.8 42.86,27.8 60,17.6 100,17.6"/>
+      <circle class="dot" cx="42.86" cy="27.8" r="0.5"/><circle class="dot" cx="60" cy="17.6" r="0.5"/>
+      <text class="lbl-s" x="99" y="9.2" text-anchor="end">FIRST CLAMP R1 = (2, 0, 6)</text>
+      <text class="lbl-s" x="99" y="21.2" text-anchor="end">R1 THEN R2 = (1, 1, 4)</text>
+      <text class="lbl-s" x="23" y="6.4">R2 = (−1, 1, 4)</text>
+
+      <line class="t" x1="119" y1="1" x2="119" y2="45"/>
+
+      <text class="lbl-b" x="122" y="4.4">DETAIL A: WORD COUNT, F5</text>
+      <text class="lbl-s" x="122.4" y="11.2">OTHER / N</text>
+      <text class="lbl-s" x="179" y="11.2" text-anchor="end">ALPHA / N</text>
+      <text class="lbl-s" x="150" y="11.4" text-anchor="middle">ALPHA / N + 1</text>
+      <text class="lbl-s" x="150" y="31" text-anchor="middle">OTHER / N</text>
+      <circle class="of" cx="134" cy="20" r="5.5"/>
+      <text class="lbl" x="134" y="20.9" text-anchor="middle">GAP</text>
+      <circle class="of" cx="166" cy="20" r="5.5"/>
+      <text class="lbl-s" x="166" y="20.8" text-anchor="middle">IN WORD</text>
+      <path class="wa" d="M138.9,17 Q150,9.6 161,17"/>
+      <path class="wa" d="M161.1,23 Q150,30.4 139,23"/>
+      <path class="wa" d="M129.4,17 C122.5,13.2 122.5,26.8 129.3,23"/>
+      <path class="wa" d="M170.6,17 C177.5,13.2 177.5,26.8 170.7,23"/>
+      <line class="wa" x1="134" y1="32" x2="134" y2="25.9"/>
+      <text class="lbl-s" x="134" y="34.6" text-anchor="middle">START</text>
+      <text class="lbl-s" x="122" y="39">Q = {GAP, IN WORD}; PAYLOAD F1 OVER INT</text>
+      <text class="lbl-s" x="122" y="42">COMPOSE COST = |Q| × 3 = 6</text>
+    </svg>
+    <figcaption><span class="n">Figure 2-2.</span>Clamp Composition and Word Count Control</figcaption>
+  </figure>
+
+  <div class="lower">
+    <div>
+      <section class="para">
+        <div class="num">2.3</div>
+        <div><h2>FAMILY DATA.</h2></div>
+      </section>
+      <div class="tcap">Table 2-1. Compose Cost and Limits</div>
+      <table>
+        <thead><tr><th>Family</th><th>Compose cost</th><th>Limit</th></tr></thead>
+        <tbody>
+          <tr><td>F0 direct monoid</td><td class="v">1</td><td class="v">listed operators</td></tr>
+          <tr><td>F1 affine</td><td class="v">3</td><td class="v">one ring state</td></tr>
+          <tr><td>F2 linear</td><td class="v">(k + 1)³</td><td class="v">k ≤ 8</td></tr>
+          <tr><td>F3 shifted clamp</td><td class="v">6</td><td class="v">one int state</td></tr>
+          <tr><td>F4 finite table</td><td class="v">|Q|</td><td class="v">|Q| ≤ 256</td></tr>
+          <tr><td>F5 control + payload</td><td class="v">|Q| × cost(R)</td><td class="v">|Q| ≤ 256</td></tr>
+          <tr><td>F6 product</td><td class="v">sum of parts</td><td class="v">independent parts</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="notice">
+        <span class="tag">NOTE</span>
+        <p>Degree-2 steps do not compose closed: s² becomes s⁴, then s⁸. A step such as r·s·(100 − s) gets no family and runs sequentially.</p>
+      </div>
+      <div class="card">
+        <div class="bar"><span>SHAPE A STATE FOR F5</span><span>DEV</span></div>
+        <ol>
+          <li><span>1</span><span>STATE - split control, payload</span></li>
+          <li><span>2</span><span>CONTROL - depend on q, x only</span></li>
+          <li><span>3</span><span>PAYLOAD - affine per control</span></li>
+          <li><span>4</span><span>WREX EXPLAIN - run</span></li>
+          <li><span></span><span>  √ family - F5 finite control</span></li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <div class="rule"></div>
+    <div class="sub">REPRESENTATION FAMILIES</div>
+    <div class="line"><span>Wrex 0.6</span><span>28 October 2026</span><span>Page 2 of 4</span></div>
+  </footer>
+</div>
+
+<!-- ================================================================ PAGE 3 -->
+<div class="page">
+  <header class="head">
+    <div class="title">WREX OPERATIONS HANDBOOK</div>
+    <div class="part">VERSION 0.6</div>
+    <div class="rule"></div>
+  </header>
+  <div class="tab" style="top:110mm">PLN</div>
+
+  <div class="opener">SECTION 3<br>EXECUTION PLANS AND COST MODEL</div>
+
+  <section class="para">
+    <div class="num">3.1</div>
+    <div>
+      <h2>INTRODUCTION.</h2>
+      <p>A certificate makes a parallel plan possible; the cost model decides whether to run it. The guard at each call site evaluates the plan formulas on the actual input size n, so one loop can run sequentially on short inputs and in parallel on long ones. Every plan returns the same answer, so selection affects only speed <span class="nowrap">(figure 3-1).</span></p>
+    </div>
+  </section>
+
+  <figure>
+    <svg viewBox="0 0 180 56" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Three-phase blocked parallel scan">
+      <text class="lbl-s" x="51" y="4.4" text-anchor="middle">1 SUMMARIZE (PARALLEL)</text>
+      <text class="lbl-s" x="84" y="4.4" text-anchor="middle">2 PREFIX</text>
+      <text class="lbl-s" x="118" y="4.4" text-anchor="middle">3 REPLAY (PARALLEL)</text>
+      <line class="ev" x1="72.6" y1="6" x2="72.6" y2="29.4"/>
+      <line class="ev" x1="95" y1="6" x2="95" y2="29.4"/>
+
+      <g class="lbl-s">
+        <text x="2" y="10.4">BLOCK 0</text><text x="13" y="10.4">X[0, N/4)</text>
+        <text x="2" y="16.4">BLOCK 1</text><text x="13" y="16.4">X[N/4, N/2)</text>
+        <text x="2" y="22.4">BLOCK 2</text><text x="13" y="22.4">X[N/2, 3N/4)</text>
+        <text x="2" y="28.4">BLOCK 3</text><text x="13" y="28.4">X[3N/4, N)</text>
+      </g>
+      <rect class="vid" x="30" y="8" width="42" height="3"/>
+      <rect class="vid" x="30" y="14" width="42" height="3"/>
+      <rect class="vid" x="30" y="20" width="42" height="3"/>
+      <rect class="vid" x="30" y="26" width="42" height="3"/>
+      <rect class="dot" x="74" y="8"  width="4.4" height="3"/>
+      <rect class="dot" x="79" y="14" width="4.4" height="3"/>
+      <rect class="dot" x="84" y="20" width="4.4" height="3"/>
+      <rect class="dot" x="89" y="26" width="4.4" height="3"/>
+      <rect class="aud" x="96" y="8"  width="44" height="3"/>
+      <rect class="aud" x="96" y="14" width="44" height="3"/>
+      <rect class="aud" x="96" y="20" width="44" height="3"/>
+      <rect class="aud" x="96" y="26" width="44" height="3"/>
+      <line class="wa" x1="140" y1="9.5" x2="145.6" y2="9.5"/>
+      <line class="wa" x1="140" y1="15.5" x2="145.6" y2="15.5"/>
+      <line class="wa" x1="140" y1="21.5" x2="145.6" y2="21.5"/>
+      <line class="wa" x1="140" y1="27.5" x2="145.6" y2="27.5"/>
+      <g class="lbl-s">
+        <text x="146.6" y="10.2">OUT[0, N/4)</text><text x="146.6" y="16.2">OUT[N/4, N/2)</text>
+        <text x="146.6" y="22.2">OUT[N/2, 3N/4)</text><text x="146.6" y="28.2">OUT[3N/4, N)</text>
+      </g>
+
+      <line class="t" x1="126.2" y1="25.6" x2="128.8" y2="29.4"/>
+      <line class="t" x1="128.8" y1="25.6" x2="126.2" y2="29.4"/>
+      <line class="ld" x1="125.4" y1="31.8" x2="126.9" y2="29.7"/>
+      <text class="lbl-s" x="126" y="34.2" text-anchor="end">TRAP: RECORDED BY INDEX, LOWEST WINS</text>
+
+      <rect class="vid" x="2" y="37.4" width="5" height="2.4"/><text class="lbl-s" x="8.2" y="39.4">COMPOSE ρ(X) ACROSS THE BLOCK</text>
+      <rect class="dot" x="62" y="37.4" width="5" height="2.4"/><text class="lbl-s" x="68.2" y="39.4">START STATE = EV(PREFIX, S0)</text>
+      <rect class="aud" x="122" y="37.4" width="5" height="2.4"/><text class="lbl-s" x="128.2" y="39.4">RUN STEP(S, X) FROM START</text>
+
+      <text class="lbl-s" x="2" y="46">T SEQ       = N · CSTEP</text>
+      <text class="lbl-s" x="2" y="49.4">T PARSCAN = (N/P)(Cρ + CCOMP + CSTEP) + P · CCOMP + 2 · CSYNC</text>
+      <text class="lbl-s" x="2" y="52.8">T PARFOLD = (N/P)(Cρ + CCOMP) + LOG2 P · (CCOMP + CSYNC) + CEV</text>
+    </svg>
+    <figcaption><span class="n">Figure 3-1.</span>Three-Phase Blocked Scan on Four Workers</figcaption>
+  </figure>
+
+  <section class="para" style="margin-top:2.2mm">
+    <div class="num">3.2</div>
+    <div>
+      <h2>FUNCTIONAL DESCRIPTION.</h2>
+      <p>Phase 1 splits n inputs into p contiguous blocks, and each worker composes ρ(x) across its block. Phase 2 forms the exclusive prefix of the p summaries and evaluates each block’s start state from s₀. Phase 3 replays the original step from that state, so a scan writes exact outputs. A fold skips phase 3 and combines the summaries by a balanced tree (figure 3-2).</p>
+    </div>
+  </section>
+
+  <section class="para">
+    <div class="num">3.2.1</div>
+    <div>
+      <h3>Trap Precision.</h3>
+      <p class="flush">A summary carries the index of its first trap, and <span class="op"></span> keeps the smaller index when both operands trap. The parallel plan therefore reports the trap the sequential program would, at the same position.</p>
+    </div>
+  </section>
+
+  <section class="para">
+    <div class="num">3.2.2</div>
+    <div>
+      <h3>Plan Refusal.</h3>
+      <p class="flush">A family whose compose costs more than 4096 operations never gets a parallel plan, however large n is. Its per-element ρ cost grows with the same size, so a large enough table is a sequential loop with extra steps.</p>
+    </div>
+  </section>
+
+  <figure>
+    <svg viewBox="0 0 180 48" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Cost per element against input size, and trap ordering detail">
+      <polyline class="w" points="24,3 24,40 112,40"/>
+      <g class="t">
+        <line x1="24" y1="40" x2="24" y2="41.2"/><line x1="41.6" y1="40" x2="41.6" y2="41.2"/><line x1="59.2" y1="40" x2="59.2" y2="41.2"/>
+        <line x1="76.8" y1="40" x2="76.8" y2="41.2"/><line x1="94.4" y1="40" x2="94.4" y2="41.2"/><line x1="112" y1="40" x2="112" y2="41.2"/>
+        <line x1="24" y1="31" x2="22.8" y2="31"/><line x1="24" y1="22" x2="22.8" y2="22"/><line x1="24" y1="13" x2="22.8" y2="13"/><line x1="24" y1="4" x2="22.8" y2="4"/>
+      </g>
+      <g class="lbl-s" text-anchor="middle">
+        <text x="24" y="43.4">1</text><text x="41.6" y="43.4">10</text><text x="59.2" y="43.4">100</text>
+        <text x="76.8" y="43.4">1000</text><text x="94.4" y="43.4">10⁴</text><text x="112" y="43.4">10⁵</text>
+      </g>
+      <g class="lbl-s" text-anchor="end">
+        <text x="22.2" y="40.7">0</text><text x="22.2" y="31.7">4</text><text x="22.2" y="22.7">8</text><text x="22.2" y="13.7">12</text><text x="22.2" y="4.7">16</text>
+      </g>
+      <text class="lbl-s" x="68" y="46.8" text-anchor="middle">INPUT SIZE N</text>
+      <text class="lbl-s" transform="translate(16 22) rotate(-90)" text-anchor="middle">COST PER ELEMENT, OPS</text>
+
+      <line class="w" x1="24" y1="28.75" x2="112" y2="28.75"/>
+      <text class="lbl-s" x="111" y="27.4" text-anchor="end">SEQ, CSTEP = 5</text>
+      <polyline class="w" style="stroke-dasharray:1.3 0.7" points="32.55,4.00 34.31,10.65 36.07,15.94 37.83,20.13 39.59,23.47 41.35,26.12 43.11,28.22 44.87,29.89 46.63,31.22 48.39,32.27 50.15,33.11 51.91,33.77 53.67,34.30 55.43,34.72 57.19,35.06 58.95,35.32 60.71,35.53 62.47,35.70 64.23,35.83 65.99,35.94 67.75,36.02 69.51,36.09 71.27,36.14 73.03,36.18 74.79,36.21 76.55,36.24 78.31,36.26 80.07,36.28 81.83,36.29 83.59,36.30 85.35,36.31 87.11,36.32 88.87,36.32 90.63,36.33 92.39,36.33 94.15,36.33 95.91,36.34 97.67,36.34 99.43,36.34 101.19,36.34 102.95,36.34 104.71,36.34 106.47,36.34 108.23,36.34 109.99,36.34 111.75,36.34"/>
+      <text class="lbl-s" x="111" y="35" text-anchor="end">PARSCAN, F1 AFFINE</text>
+      <polyline class="w" style="stroke-dasharray:0.5 0.6" points="46.18,4.00 47.94,6.95 49.70,9.29 51.46,11.15 53.22,12.63 54.98,13.81 56.74,14.74 58.50,15.48 60.26,16.07 62.02,16.54 63.78,16.91 65.54,17.20 67.30,17.44 69.06,17.62 70.82,17.77 72.58,17.89 74.34,17.98 76.10,18.06 77.86,18.12 79.62,18.16 81.38,18.20 83.14,18.23 84.90,18.25 86.66,18.27 88.42,18.29 90.18,18.30 91.94,18.31 93.70,18.32 95.46,18.32 97.22,18.33 98.98,18.33 100.74,18.33 102.50,18.33 104.26,18.34 106.02,18.34 107.78,18.34 109.54,18.34 111.30,18.34"/>
+      <text class="lbl-s" x="111" y="16.8" text-anchor="end">PARSCAN, F5 WITH |Q| = 12: NEVER WINS</text>
+      <circle class="dot" cx="43.63" cy="28.75" r="0.6"/>
+      <line class="ld" x1="49" y1="24.6" x2="44.2" y2="28.1"/>
+      <text class="lbl-s" x="49.6" y="24">CROSSOVER N ≈ 13</text>
+      <text class="lbl-s" x="62" y="7.4">P = 8, CSYNC = 10</text>
+
+      <line class="t" x1="119" y1="1" x2="119" y2="47"/>
+
+      <text class="lbl-b" x="122" y="4.4">DETAIL A: FIRST TRAP</text>
+      <g id="trapcells"></g>
+      <path class="t" d="M125,15 L125,16.4 L148.6,16.4 L148.6,15"/>
+      <path class="t" d="M150.6,15 L150.6,16.4 L174.2,16.4 L174.2,15"/>
+      <line class="wa" x1="136.8" y1="16.4" x2="136.8" y2="19.6"/>
+      <line class="wa" x1="162.4" y1="16.4" x2="162.4" y2="19.6"/>
+      <rect class="box" x="127" y="20" width="19.6" height="5"/><text class="lbl-s" x="136.8" y="23.3" text-anchor="middle">TRAP AT 3</text>
+      <rect class="box" x="152.6" y="20" width="19.6" height="5"/><text class="lbl-s" x="162.4" y="23.3" text-anchor="middle">TRAP AT 6</text>
+      <line class="w" x1="136.8" y1="25" x2="148.5" y2="30.4"/>
+      <line class="w" x1="162.4" y1="25" x2="150.7" y2="30.4"/>
+      <path class="of" d="M149.6,29.4 L151.2,31 L149.6,32.6 L148,31 Z"/>
+      <line class="wa" x1="149.6" y1="32.6" x2="149.6" y2="35.6"/>
+      <rect class="box" x="134" y="36" width="31.2" height="5"/><text class="lbl-s" x="149.6" y="39.3" text-anchor="middle">REPORT TRAP AT 3</text>
+      <text class="lbl-s" x="149.6" y="45" text-anchor="middle">SMALLER INDEX WINS</text>
+    </svg>
+    <script>
+      ;(function () {
+        const ns = 'http://www.w3.org/2000/svg', g = document.getElementById('trapcells')
+        const el = (tag, a, txt) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt) e.textContent = txt; g.append(e) }
+        for (let i = 0; i < 8; i++) {
+          const x = 125 + i * 6.15 + (i > 3 ? 1.2 : 0)
+          el('rect', { class: 'box', x, y: 10, width: 5.5, height: 4.4 })
+          el('text', { class: 'lbl-s', x: x + 2.75, y: 9, 'text-anchor': 'middle' }, String(i))
+          if (i === 3 || i === 6) { el('line', { class: 't', x1: x + 0.8, y1: 10.6, x2: x + 4.7, y2: 13.8 }); el('line', { class: 't', x1: x + 4.7, y1: 10.6, x2: x + 0.8, y2: 13.8 }) }
+        }
+      })()
+    </script>
+    <figcaption><span class="n">Figure 3-2.</span>Plan Crossover and First-Trap Ordering</figcaption>
+  </figure>
+
+  <div class="lower">
+    <div>
+      <section class="para">
+        <div class="num">3.3</div>
+        <div><h2>COST MODEL DATA.</h2></div>
+      </section>
+      <div class="tcap">Table 3-1. Default Cost-Model Constants</div>
+      <table>
+        <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Workers, p</td><td class="v">8</td></tr>
+          <tr><td>Synchronization cost, c_sync</td><td class="v">10 ops</td></tr>
+          <tr><td>Contraction constants, κ and κ′</td><td class="v">2 and 1</td></tr>
+          <tr><td>GPU kernel launch, c_launch</td><td class="v">5000 ops</td></tr>
+          <tr><td>GPU parallel width, P_dev</td><td class="v">1024</td></tr>
+          <tr><td>Compose cost cutoff for parallel plans</td><td class="v">4096 ops</td></tr>
+          <tr><td>Benchmark input size, default</td><td class="v">2000</td></tr>
+          <tr><td>Calibration file</td><td class="v">~/.wrex-calibration.json</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="notice">
+        <span class="tag">CAUTION</span>
+        <p>@reassoc lets f64 folds run in parallel. Rounding may differ from the sequential order; bit-for-bit equality no longer holds.</p>
+      </div>
+      <div class="card">
+        <div class="bar"><span>TUNE PLAN SELECTION</span><span>DEV</span></div>
+        <ol>
+          <li><span>1</span><span>WREX CALIBRATE - run once</span></li>
+          <li><span></span><span>  √ calibration file - written</span></li>
+          <li><span>2</span><span>WREX EXPLAIN - read threshold n</span></li>
+          <li><span>3</span><span>WREX RUN - --workers=16</span></li>
+          <li><span>4</span><span>WREX RUN - --plan=seq, compare</span></li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <div class="rule"></div>
+    <div class="sub">EXECUTION PLANS AND COST MODEL</div>
+    <div class="line"><span>Wrex 0.6</span><span>28 October 2026</span><span>Page 3 of 4</span></div>
+  </footer>
+</div>
+
+<!-- ================================================================ PAGE 4 -->
+<div class="page">
+  <header class="head">
+    <div class="title">WREX OPERATIONS HANDBOOK</div>
+    <div class="part">VERSION 0.6</div>
+    <div class="rule"></div>
+  </header>
+  <div class="tab" style="top:145mm">BKD</div>
+
+  <div class="opener">SECTION 4<br>TREE FOLDS AND BACKENDS</div>
+
+  <section class="para">
+    <div class="num">4.1</div>
+    <div>
+      <h2>INTRODUCTION.</h2>
+      <p>A treefold gives one arm per constructor, and recursive fields stand for the folded results of the children. When every one-hole context of every arm lies in a family, the runtime contracts the tree in rounds of logarithmic depth whatever its shape. A list-shaped tree, which gives fork-join nothing to split, still runs in parallel <span class="nowrap">(figure 4-1).</span></p>
+    </div>
+  </section>
+
+  <figure>
+    <svg viewBox="0 0 180 58" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tree contraction of a list-shaped expression tree">
+      <rect class="panel" x="0.5" y="1.5" width="44" height="45"/>
+      <rect class="panel" x="45.5" y="1.5" width="44" height="45"/>
+      <rect class="panel" x="90.5" y="1.5" width="44" height="45"/>
+      <rect class="panel" x="135.5" y="1.5" width="44" height="45"/>
+      <text class="lbl-s" x="2.4" y="4.6">ROUND 0: LIST-SHAPED TREE</text>
+      <text class="lbl-s" x="47.4" y="4.6">RAKE AND UNARY: CONTEXTS</text>
+      <text class="lbl-s" x="92.4" y="4.6">COMPRESS: COMPOSE PAIRS</text>
+      <text class="lbl-s" x="137.4" y="4.6">FINAL RAKE: RESULT</text>
+
+      <!-- panel A: Add(1, Add(2, Add(3, Add(4, 5)))) -->
+      <g id="listtree"></g>
+
+      <!-- panel B -->
+      <rect class="box" x="56" y="9" width="22" height="5"/><text class="lbl-s" x="67" y="12.3" text-anchor="middle">V → 1 + V</text>
+      <line class="w" x1="67" y1="14" x2="67" y2="17"/>
+      <rect class="box" x="56" y="17" width="22" height="5"/><text class="lbl-s" x="67" y="20.3" text-anchor="middle">V → 2 + V</text>
+      <line class="w" x1="67" y1="22" x2="67" y2="25"/>
+      <rect class="box" x="56" y="25" width="22" height="5"/><text class="lbl-s" x="67" y="28.3" text-anchor="middle">V → 3 + V</text>
+      <line class="w" x1="67" y1="30" x2="67" y2="33"/>
+      <circle class="of" cx="67" cy="36" r="3"/><text class="lbl" x="67" y="36.8" text-anchor="middle">9</text>
+      <text class="lbl-s" x="72" y="41.8">4 + 5 RAKED</text>
+
+      <!-- panel C -->
+      <rect class="box" x="101" y="13" width="22" height="5"/><text class="lbl-s" x="112" y="16.3" text-anchor="middle">V → 3 + V</text>
+      <line class="w" x1="112" y1="18" x2="112" y2="23"/>
+      <circle class="of" cx="112" cy="26" r="3"/><text class="lbl" x="112" y="26.8" text-anchor="middle">12</text>
+      <text class="lbl-s" x="112" y="35.4" text-anchor="middle">(1 + V) THEN (2 + V)</text>
+      <text class="lbl-s" x="112" y="38.4" text-anchor="middle">MERGED; 3 + 9 RAKED</text>
+
+      <!-- panel D -->
+      <circle class="of" cx="157.5" cy="22" r="4"/><text class="lbl" x="157.5" y="22.8" text-anchor="middle">15</text>
+      <text class="lbl-s" x="157.5" y="32" text-anchor="middle">3 + 12</text>
+
+      <text class="lbl-s" x="2" y="51.4">CONTEXTS: ADD  V → C + V;  MUL  V → C · V;  NEG  V → 0 − V.  ALL F1 AFFINE, ONE HOLE EACH.</text>
+      <text class="lbl-s" x="2" y="55">CONTRACT DEPTH O(LOG N) FOR ANY SHAPE; FORKJOIN DEPTH EQUALS TREE HEIGHT H.</text>
+    </svg>
+    <script>
+      ;(function () {
+        const ns = 'http://www.w3.org/2000/svg', g = document.getElementById('listtree')
+        const el = (tag, a, txt) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt) e.textContent = txt; g.append(e) }
+        const adds = [[16, 10], [23, 18.5], [30, 27], [37, 35.5]]
+        adds.forEach(([x, y], i) => {
+          const lx = x - 8, ly = y + 6.5
+          el('line', { class: 'o', x1: x - 1.6, y1: y + 1.9, x2: lx + 1, y2: ly - 2.2 })
+          el('rect', { class: 'box', x: lx - 3, y: ly - 2.2, width: 6, height: 4.4 })
+          el('text', { class: 'lbl-s', x: lx, y: ly + 0.75, 'text-anchor': 'middle' }, String(i + 1))
+          if (i < 3) el('line', { class: 'o', x1: x + 1.6, y1: y + 1.9, x2: adds[i + 1][0] - 1.6, y2: adds[i + 1][1] - 1.9 })
+          else {
+            const rx = x + 4, ry = y + 6.5
+            el('line', { class: 'o', x1: x + 1.2, y1: y + 2.2, x2: rx - 0.6, y2: ry - 2.2 })
+            el('rect', { class: 'box', x: rx - 3, y: ry - 2.2, width: 6, height: 4.4 })
+            el('text', { class: 'lbl-s', x: rx, y: ry + 0.75, 'text-anchor': 'middle' }, '5')
+          }
+          el('circle', { class: 'of', cx: x, cy: y, r: 2.5 })
+          el('text', { class: 'lbl', x, y: y + 0.85, 'text-anchor': 'middle' }, '+')
+        })
+      })()
+    </script>
+    <figcaption><span class="n">Figure 4-1.</span>Tree Contraction of 1 + (2 + (3 + (4 + 5)))</figcaption>
+  </figure>
+
+  <section class="para" style="margin-top:2.2mm">
+    <div class="num">4.2</div>
+    <div>
+      <h2>FUNCTIONAL DESCRIPTION.</h2>
+      <p>Three backends run certified loops. The interpreter executes every plan and is the reference. The C backend emits standalone C with pthreads for folds and scans in all families F0 through F6; it reads parameters, n, inputs and the initial state on stdin and takes the thread count as its first argument. The GPU backend lowers folds and scans to tinygrad tensor operations and falls back to the exact CPU plan on any failure (figure 4-2).</p>
+    </div>
+  </section>
+
+  <section class="para">
+    <div class="num">4.2.1</div>
+    <div>
+      <h3>Nested Folds.</h3>
+      <p class="flush">The outer plan owns the parallelism. A fold inside a step that the outer plan is already evaluating runs sequentially.</p>
+    </div>
+  </section>
+
+  <section class="para">
+    <div class="num">4.2.2</div>
+    <div>
+      <h3>Tree Plan Choice.</h3>
+      <p class="flush">Every tree node records its size and height when built. The guard compares ForkJoin, <span class="nowrap">(n/p)·c_arm + h·c_sync</span>, with Contract and takes the cheaper; a balanced tree needs no contexts.</p>
+    </div>
+  </section>
+
+  <figure>
+    <svg viewBox="0 0 180 50" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Generated C program data flow and GPU lowering detail">
+      <text class="lbl-s" x="2" y="7.6">STDIN</text>
+      <rect class="aud" x="14" y="4.6" width="20" height="4"/><text class="lbl-s" x="24" y="7.4" text-anchor="middle">PARAMETERS</text>
+      <rect class="aud" x="34" y="4.6" width="8" height="4"/><text class="lbl-s" x="38" y="7.4" text-anchor="middle">N</text>
+      <rect class="vid" x="42" y="4.6" width="48" height="4"/>
+      <rect class="aud" x="90" y="4.6" width="14" height="4"/><text class="lbl-s" x="97" y="7.4" text-anchor="middle">S0</text>
+      <text class="lbl-s" x="66" y="3.4" text-anchor="middle">N × INPUT FIELDS</text>
+      <line class="wa" x1="59" y1="8.6" x2="59" y2="12.6"/>
+
+      <rect class="box" x="30" y="13" width="58" height="6"/>
+      <text class="lbl" x="59" y="16.9" text-anchor="middle">MAIN: READ, SPLIT INTO P BLOCKS</text>
+      <line class="w" x1="59" y1="19" x2="59" y2="21.5"/>
+      <line class="w" x1="23" y1="21.5" x2="95" y2="21.5"/>
+      <circle class="dot" cx="59" cy="21.5" r="0.55"/>
+      <g id="threads"></g>
+      <line class="w" x1="23" y1="31.5" x2="95" y2="31.5"/>
+      <line class="wa" x1="59" y1="31.5" x2="59" y2="34.6"/>
+      <circle class="dot" cx="59" cy="31.5" r="0.55"/>
+      <rect class="box" x="30" y="35" width="58" height="6"/>
+      <text class="lbl" x="59" y="38.9" text-anchor="middle">PREFIX, REPLAY, LOWEST TRAP</text>
+      <line class="wa" x1="88" y1="38" x2="99.6" y2="38"/>
+      <text class="lbl-s" x="100.4" y="38.7">STDOUT</text>
+      <text class="lbl-s" x="2" y="46.4">P = ARGV[1], DEFAULT 4.  BLOCKS = MIN(P, N).  INT IS INT64_T.</text>
+
+      <line class="t" x1="119" y1="1" x2="119" y2="49"/>
+
+      <text class="lbl-b" x="122" y="4.4">DETAIL A: GPU LOWERING</text>
+      <g class="lbl-s">
+        <text x="122" y="10.4">F2</text><text x="138" y="10.4">BATCHED MATRIX PRODUCT</text>
+        <text x="122" y="15">F4, F5</text><text x="138" y="15">GATHER ON CONTROL</text>
+        <text x="122" y="19.6">F6</text><text x="138" y="19.6">PER COMPONENT</text>
+        <text x="122" y="24.2">FOLD</text><text x="138" y="24.2">PAIRWISE TREE REDUCE</text>
+        <text x="122" y="28.8">SCAN</text><text x="138" y="28.8">HILLIS-STEELE PREFIX</text>
+        <text x="122" y="33.4">TREE</text><text x="138" y="33.4">ONE BATCH PER ROUND</text>
+        <text x="122" y="38">FAILURE</text><text x="138" y="38">EXACT CPU PLAN</text>
+      </g>
+      <g class="t">
+        <line x1="122" y1="11.9" x2="179" y2="11.9"/><line x1="122" y1="16.5" x2="179" y2="16.5"/>
+        <line x1="122" y1="21.1" x2="179" y2="21.1"/><line x1="122" y1="25.7" x2="179" y2="25.7"/>
+        <line x1="122" y1="30.3" x2="179" y2="30.3"/><line x1="122" y1="34.9" x2="179" y2="34.9"/>
+      </g>
+      <text class="lbl-s" x="122" y="44">OPERAND ORDER KEPT: COMPOSE</text>
+      <text class="lbl-s" x="122" y="47">IS NOT COMMUTATIVE</text>
+    </svg>
+    <script>
+      ;(function () {
+        const ns = 'http://www.w3.org/2000/svg', g = document.getElementById('threads')
+        const el = (tag, a, txt) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt) e.textContent = txt; g.append(e) }
+        ;[23, 47, 71, 95].forEach((x, i) => {
+          if (i === 0 || i === 3) {} else el('circle', { class: 'dot', cx: x, cy: 21.5, r: 0.55 })
+          el('line', { class: 'wa', x1: x, y1: 21.5, x2: x, y2: 23.6 })
+          el('rect', { class: 'box', x: x - 10, y: 24, width: 20, height: 5.4 })
+          el('text', { class: 'lbl-s', x, y: 27.5, 'text-anchor': 'middle' }, 'PTHREAD ' + i)
+          el('line', { class: 'w', x1: x, y1: 29.4, x2: x, y2: 31.5 })
+        })
+      })()
+    </script>
+    <figcaption><span class="n">Figure 4-2.</span>Generated C Program and GPU Lowering</figcaption>
+  </figure>
+
+  <div class="lower">
+    <div>
+      <section class="para">
+        <div class="num">4.3</div>
+        <div><h2>BACKEND DATA.</h2></div>
+      </section>
+      <div class="tcap">Table 4-1. Backend Coverage and Checks</div>
+      <table>
+        <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>C backend families</td><td class="v">F0 – F6, fold and scan</td></tr>
+          <tr><td>C threads, default</td><td class="v">4, first argument</td></tr>
+          <tr><td>C check against interpreter</td><td class="v">byte for byte</td></tr>
+          <tr><td>GPU library</td><td class="v">tinygrad, optional</td></tr>
+          <tr><td>GPU tree contexts</td><td class="v">F0, F1, F2, F3</td></tr>
+          <tr><td>Fuzzer plans compared</td><td class="v">Seq, Par, auto, GPU, C</td></tr>
+          <tr><td>Fuzzer iterations, default</td><td class="v">50</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="notice">
+        <span class="tag">NOTE</span>
+        <p>Generated C uses int64_t for int, so exactness holds within the int64 range, the same bound as the GPU backend.</p>
+      </div>
+      <div class="card">
+        <div class="bar"><span>BUILD NATIVE</span><span>DEV</span></div>
+        <ol>
+          <li><span>1</span><span>WREX CODEGEN - -o out.c</span></li>
+          <li><span>2</span><span>CC - out.c -O2 -pthread</span></li>
+          <li><span>3</span><span>./A.OUT 8 - pipe n, xs, s0</span></li>
+          <li><span></span><span>  √ output - equals wrex run</span></li>
+          <li><span>4</span><span>WREX BENCH - --c for timings</span></li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <div class="rule"></div>
+    <div class="sub">TREE FOLDS AND BACKENDS</div>
+    <div class="line"><span>Wrex 0.6</span><span>28 October 2026</span><span>Page 4 of 4</span></div>
+  </footer>
+</div>
+
+<script>
+  document.fonts.ready.then(() => {
+    const out = []
+    document.querySelectorAll('.page').forEach((page, i) => {
+      const foot = page.querySelector('.foot')
+      let bottom = 0
+      for (const el of page.children) {
+        if (el === foot || el.classList.contains('tab') || el.tagName === 'SCRIPT') continue
+        bottom = Math.max(bottom, el.getBoundingClientRect().bottom)
+      }
+      out.push((foot.getBoundingClientRect().top - bottom) * 25.4 / 96)
+    })
+    const worst = Math.min(...out)
+    const list = out.map((f, i) => `p${i + 1} ${f.toFixed(1)}`).join(', ')
+    document.documentElement.dataset.fit = worst >= 0 ? `ok, mm free: ${list}` : `OVERFLOW (${list})`
+  })
+</script>
+</body>
+</html>
