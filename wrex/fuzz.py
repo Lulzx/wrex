@@ -40,6 +40,10 @@ def gen_case(rnd):
                f"fn main(args: [Str]) -> Out:\n    print(f({lit}))\n")
         return src, ("fold", data)
     if kind == "degree2_fold":
+        # keep the (intentionally unrepresentable) quadratic iteration short:
+        # its magnitude roughly squares each step and otherwise explodes
+        data = [max(-2, min(2, v)) for v in data[:4]]
+        lit = "[" + ", ".join(str(v) for v in data) + "]"
         src = f"fn f(xs: [int]) -> int:\n    fold(xs, 1, (s, r) => r * s * (10 - s))\nfn main(args: [Str]) -> Out:\n    print(f({lit}))\n"
         return src, None
     if kind == "finite_fold":
