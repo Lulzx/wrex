@@ -35,3 +35,9 @@ jobs:
         run: wrex fuzz --iters=60 --seed=11
       - name: Benchmarks (all plans must agree)
         run: wrex bench --n=200
+      - name: Wheel installs and runs
+        run: |
+          pip wheel . -w /tmp/dist --no-deps
+          python -m venv /tmp/wheelvenv
+          /tmp/wheelvenv/bin/pip install /tmp/dist/*.whl
+          cd /tmp && /tmp/wheelvenv/bin/wrex run $GITHUB_WORKSPACE/examples/word_count.wrx

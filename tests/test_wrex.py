@@ -186,6 +186,11 @@ class TestCodegen(unittest.TestCase):
               "fn main(args: [Str]) -> Out:\n    print(f([1]))\n")
         self.assertEqual(self._run_c(f6, "f", "3 1 2 3 0 1"), "6 8")
 
+    def test_c_tropical_f2_fold(self):
+        src = ("fn viterbi(xs: [int]) -> (int, int):\n    fold(xs, (0, 0), ((a, b), x) => (max(a + x, b + (0 - x)), max(a + (0 - x), b + x)))\n"
+               "fn main(args: [Str]) -> Out:\n    print(viterbi([3]))\n")
+        self.assertEqual(self._run_c(src, "viterbi", "5 3 -1 2 0 -4 0 0"), "10 10")
+
     def test_c_multi_control_f5(self):
         src = ("type Mode = InWord | Gap\n"
                "fn f(text: [u8]) -> ((Mode, bool), int):\n    fold(text, ((Gap, false), 0), (((m, f), n), c) =>\n"
@@ -198,6 +203,36 @@ class TestFuzz(unittest.TestCase):
     def test_fuzz_small(self):
         from wrex.fuzz import fuzz
         self.assertEqual(fuzz(iters=25, seed=7), [])
+
+class TestInferenceCompleteness(unittest.TestCase):
+    """Characterization (spec open question 1): inference is complete for
+    steps whose ring/lattice normal forms lie in F1/F3, and reports the
+    exact boundary cases that fall outside them."""
+    def _cert(self, body, scan=False):
+        comb = "scan" if scan else "fold"
+        src = (f"fn f(xs: [int]) -> {'[int]' if scan else 'int'}:\n    {comb}(xs, 0, (s, x) => {body})\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([3, -2, 5]))\n")
+        prog, ck, an = compile_source(src)
+        return src, an.records[0]
+    def test_affine_complete(self):
+        for body in ["s * (x + 1) + (x - 2)", "(x + 2) * s + x * x", "s + x * x",
+                     "if x > 0 then s + x else s - x", "s * 2 + 1"]:
+            src, rec = self._cert(body)
+            self.assertIn("cert", rec, body)
+            self.assertEqual(run(src, "seq"), run(src, "par"), body)
+    def test_clamp_complete(self):
+        for body in ["clamp(s + x, 0, 10)", "max(s, x)", "min(s + x, 100)", "clamp(s - x, -5, 5)"]:
+            src, rec = self._cert(body, scan=True)
+            self.assertIn("cert", rec, body)
+            self.assertEqual(run(src, "seq"), run(src, "par"), body)
+    def test_boundaries_obstructed(self):
+        for body in ["s * s + x", "x / s", "if s > 0 then s + x else s"]:
+            src, rec = self._cert(body)
+            self.assertIn("obs", rec, body)
+    def test_exhaustive_finite_laws(self):
+        from wrex.conformance import exhaustive_finite_laws
+        for name, errs in exhaustive_finite_laws().items():
+            self.assertEqual(errs, [], name)
 
 class TestBench(unittest.TestCase):
     def test_bench_all_plans_agree(self):

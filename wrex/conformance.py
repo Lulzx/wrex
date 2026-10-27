@@ -40,6 +40,38 @@ def family_law_tests():
     results['F6']=check_family('F6',f6,lambda r:((r.randint(-3,3),r.randint(-5,5)),r.randint(-5,5)),lambda r:(r.randint(-5,5),r.randint(-5,5)))
     return results
 
+def exhaustive_finite_laws():
+    """Exhaustive (not sampled) law checks over every element of small
+    finite families: F4 over a 3-state set, and F5 with 2 control states
+    and payload elements in {-1, 0, 1} under F0(+)."""
+    results = {}
+    # F4: all 27 functions {0,1,2} -> {0,1,2}
+    import itertools
+    fam = F.F4([0, 1, 2]); elems = list(itertools.product([0, 1, 2], repeat=3)); errs = []
+    for a in elems:
+        if fam.ev(fam.compose(fam.identity(), a), 0) != fam.ev(a, 0): errs.append("identity"); break
+        for b in elems:
+            for c in elems:
+                if fam.compose(fam.compose(a, b), c) != fam.compose(a, fam.compose(b, c)): errs.append("assoc"); break
+            for s in (0, 1, 2):
+                if fam.ev(fam.compose(a, b), s) != fam.ev(b, fam.ev(a, s)): errs.append("L2"); break
+    results['F4 exhaustive (27 elements)'] = errs
+    # F5: control {0,1}, payload F0(+) with elements in {-1,0,1}: 36 elements
+    fam5 = F.F5([0, 1], F.F0('+', 'int'))
+    per_q = [(q2, m) for q2 in (0, 1) for m in (-1, 0, 1)]
+    elems5 = [(a, b) for a in per_q for b in per_q]; errs = []
+    for a in elems5:
+        for b in elems5:
+            for c in elems5:
+                if fam5.compose(fam5.compose(a, b), c) != fam5.compose(a, fam5.compose(b, c)): errs.append("assoc"); break
+            for s in [(q, v) for q in (0, 1) for v in (-2, 0, 2)]:
+                try:
+                    if fam5.ev(fam5.compose(a, b), s) != fam5.ev(b, fam5.ev(a, s)): errs.append("L2")
+                except Exception: errs.append("ev error")
+                break
+    results['F5 exhaustive (36 elements)'] = errs
+    return results
+
 def run_with_plan(src,plan,workers=8,argv=None):
     from .compiler import compile_source, make_interpreter
     from .interp import Config, run_main

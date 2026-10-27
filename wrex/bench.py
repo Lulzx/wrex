@@ -57,17 +57,49 @@ def run_bench(n=2000, gpu=False):
         rows.append((label, "contexts F1", getattr(tree, 'size', 0), out, len(set(results.values())) == 1))
     return rows
 
+def run_c_bench(n=100000):
+    """Native baselines: time the generated C (spec Appendix B requires
+    competent native baselines) for the benchmarks it supports."""
+    import subprocess, tempfile, os
+    from .compiler import compile_source
+    from .codegen import generate_c
+    rnd = random.Random(42)
+    i64s = [rnd.randint(-9, 9) for _ in range(n)]
+    cases = {
+        "Prefix sum": ("prefix_sum.wrx", "prefix_sum", f"{n} " + " ".join(map(str, i64s)) + " 0"),
+        "Linear recurrence": ("linear_recurrence.wrx", "balances", f"{n} " + " ".join(f"1 {x}" for x in i64s) + " 0"),
+        "Saturating counters": ("saturating_counters.wrx", "stock_levels", "50 " + f"{n} " + " ".join(map(str, i64s)) + " 0"),
+        "Tokenizer with counters": ("tokenizer.wrx", "word_count", f"{n} " + " ".join(str(rnd.choice(b"ab ")) for _ in range(n)) + " 1 0"),
+        "Viterbi decoding (tropical)": ("viterbi.wrx", "viterbi", f"{n} " + " ".join(map(str, i64s)) + " 0 0"),
+    }
+    out = {}
+    with tempfile.TemporaryDirectory() as d:
+        for label, (fname, fn, stdin) in cases.items():
+            with open(os.path.join(BENCH_DIR, fname)) as f: prog, ck, an = compile_source(f.read())
+            csrc = generate_c(prog, an, fn)
+            cpath, binpath = os.path.join(d, "b.c"), os.path.join(d, "b")
+            open(cpath, "w").write(csrc)
+            r = subprocess.run(["cc", "-O2", "-o", binpath, cpath], capture_output=True, text=True)
+            if r.returncode != 0: out[label] = float('nan'); continue
+            t0 = time.perf_counter()
+            r = subprocess.run([binpath, "8"], input=stdin, capture_output=True, text=True)
+            out[label] = time.perf_counter() - t0 if r.returncode == 0 else float('nan')
+    return out
+
 def main(argv=None):
     import sys
     argv = list(sys.argv[1:] if argv is None else argv)
-    n = 2000; gpu = "--gpu" in argv
+    n = 2000; gpu = "--gpu" in argv; with_c = "--c" in argv
     for a in argv:
         if a.startswith("--n="): n = int(a.split("=", 1)[1])
     rows = run_bench(n=n, gpu=gpu)
-    print(f"| benchmark | family | n | " + " | ".join(["seq (s)", "par (s)"] + (["gpu (s)"] if gpu else [])) + " | plans agree |")
-    print("|---|---|---|---|" + "---|" * (3 if gpu else 2))
+    ctimes = run_c_bench() if with_c else {}
+    cols = ["seq (s)", "par (s)"] + (["gpu (s)"] if gpu else []) + (["C (s)"] if with_c else [])
+    print(f"| benchmark | family | n | " + " | ".join(cols) + " | plans agree |")
+    print("|---|---|---|---|" + "---|" * len(cols))
     for label, fam, nn, out, agree in rows:
         cells = [f"{out.get(k, float('nan')):.4f}" for k in (("seq", "par", "metal") if gpu else ("seq", "par"))]
+        if with_c: cells.append(f"{ctimes.get(label, float('nan')):.4f}" if label in ctimes else "-")
         print(f"| {label} | {fam} | {nn} | " + " | ".join(cells) + f" | {'yes' if agree else 'NO'} |")
     return 0 if all(r[4] for r in rows) else 1
 

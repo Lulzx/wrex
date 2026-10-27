@@ -116,6 +116,10 @@ def main(argv=None):
                 for name,errs in laws.items():
                     print(f"family laws {name}: {'ok' if not errs else 'FAIL '+str(errs)}")
                     bad+=bool(errs)
+                from .conformance import exhaustive_finite_laws
+                for name,errs in exhaustive_finite_laws().items():
+                    print(f"exhaustive laws {name}: {'ok' if not errs else 'FAIL '+str(errs)}")
+                    bad+=bool(errs)
                 if any(d.name=='main' for d in prog.decls):
                     ok,outs=differential(src,rest[1:])
                     print(f"differential (seq/par/auto): {'ok' if ok else 'FAIL '+str(outs)}")

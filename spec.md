@@ -1,6 +1,6 @@
 # Wrex Language Specification
 
-**Version:** 0.5
+**Version:** 0.6
 **Status:** Implemented. The reference implementation covers Sections 1–14: parser, type checker, reference interpreter, representation inference for F0–F6, CPU plans, tree contraction, the tinygrad backend, a C code generator for certified folds and scans in all families F0-F6, and GPU tree contraction for F1 contexts (see the repository README for the exact backend coverage and remaining gaps).
 
 ---
