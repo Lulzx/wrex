@@ -154,21 +154,51 @@ def _gen(cert, prefix, env, lines, fns, ctor_map=None):
                   f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e; for(int i=0;i<{q};i++) e.t[i] = (int){step_fn}(i, in); return e; }}"]
         return T, 1
     if k == 'F5':
-        if len(cert.ctrl_scope) != 1: raise CodegenError("C backend: F5 with multiple control components is not supported")
         q = len(cert.qvalues)
-        ctrl_map = {}
         from .values import ADT
-        for idx, v in enumerate(cert.qvalues):
-            if isinstance(v, ADT): ctrl_map[v.ctor] = idx
-        env_pay = dict(env); env_pay[cert.ctrl_names[0]] = "aux"
-        PT, pwords = _gen(cert.payload, prefix + "_pay", env_pay, lines, fns, ctor_map=ctrl_map)
+        nctrl = len(cert.ctrl_scope)
+        # control values: scalar for one component, tuples for several; each
+        # component gets a dense encoding over its distinct values
+        def comps(v): return list(v) if isinstance(v, tuple) else [v]
+        comp_values = []
+        for j in range(nctrl):
+            seen = []
+            for v in cert.qvalues:
+                cv = comps(v)[j]
+                if cv not in seen: seen.append(cv)
+            comp_values.append(seen)
+        def enc(j, v): return comp_values[j].index(v)
+        dec_table = [[enc(j, comps(v)[j]) for j in range(nctrl)] for v in cert.qvalues]
+        lines.append(f"static const i64 ctrl_dec_{prefix}[{q}][{nctrl}] = {{{', '.join('{'+', '.join(str(x) for x in row)+'}' for row in dec_table)}}};")
+        # encode(control components...) -> combined index, by table search
+        lines.append(f"static int ctrl_enc_{prefix}({', '.join('i64 c'+str(j) for j in range(nctrl))}){{ "
+                     + " ".join(f"for(int i=0;i<{q};i++){{ if({ ' && '.join(f'ctrl_dec_{prefix}[i][{j}]==c{j}' for j in range(nctrl)) }) return i; }}" for _ in [0])
+                     + " return 0; }")
+        ctrl_maps = []
+        for j in range(nctrl):
+            cm = {}
+            for v in comp_values[j]:
+                if isinstance(v, ADT): cm[v.ctor] = enc(j, v)
+            ctrl_maps.append(cm)
+        merged_map = {}
+        for cm in ctrl_maps: merged_map.update(cm)
+        env_pay = dict(env)
+        for j, name in enumerate(cert.ctrl_names):
+            env_pay[name] = f"ctrl_dec_{prefix}[aux][{j}]" if nctrl > 1 else "aux"
+        # with a single component the generated payload sees aux = component encoding (= combined index when scalar)
+        PT, pwords = _gen(cert.payload, prefix + "_pay", env_pay, lines, fns, ctor_map=merged_map)
         pidf, pcof, pevf, prhof = f"elem_{prefix}_pay_ident", f"elem_{prefix}_pay_compose", f"elem_{prefix}_pay_ev", f"elem_{prefix}_pay_rho"
-        ctrl_expr = _csym(cert.ctrl_syms[0], env, varmap={cert.ctrl_scope[0]: "q"}, ctor_map=ctrl_map)
+        varmap = {cert.ctrl_scope[j]: (f"ctrl_dec_{prefix}[q][{j}]" if nctrl > 1 else "q") for j in range(nctrl)}
+        ctrl_exprs = [_csym(cert.ctrl_syms[j], env, varmap=varmap, ctor_map=ctrl_maps[j]) for j in range(nctrl)]
+        if nctrl == 1:
+            ctrl_next = f"(int)({ctrl_exprs[0]})"
+        else:
+            ctrl_next = f"ctrl_enc_{prefix}({', '.join('('+e+')' for e in ctrl_exprs)})"
         lines += [f"typedef struct {{ int nxt[{q}]; {PT} pay[{q}]; }} {T};",
                   f"static {T} {idf}(void){{ {T} e; for(int i=0;i<{q};i++){{ e.nxt[i]=i; e.pay[i]={pidf}(); }} return e; }}",
                   f"static {T} {cof}({T} x, {T} y){{ {T} e; for(int i=0;i<{q};i++){{ int q1 = x.nxt[i]; e.nxt[i] = y.nxt[q1]; e.pay[i] = {pcof}(x.pay[i], y.pay[q1]); }} return e; }}",
                   f"static void {evf}({T} r, const i64* s, i64* out){{ int q = (int)s[0]; out[0] = r.nxt[q]; {pevf}(r.pay[q], s+1, out+1); }}",
-                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e; for(int q=0;q<{q};q++){{ e.nxt[q] = (int)({ctrl_expr}); e.pay[q] = {prhof}(in, q); }} return e; }}"]
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e; for(int q=0;q<{q};q++){{ e.nxt[q] = {ctrl_next}; e.pay[q] = {prhof}(in, q); }} return e; }}"]
         return T, 1 + pwords
     if k == 'F6':
         subs = []

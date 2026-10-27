@@ -28,7 +28,7 @@ def run_bench(n=2000, gpu=False):
         fam = next((r["cert"].describe() for r in an.records if "cert" in r), "none")
         out = {}
         results = {}
-        for plan, dev in (("seq", "cpu"), ("par", "cpu")) + ((("par", "metal"),) if gpu else ()):
+        for plan, dev in (("seq", "cpu"), ("par", "cpu"), ("auto", "cpu")) + ((("par", "metal"),) if gpu else ()):
             interp = make_interpreter(prog, an, Config(plan=plan, workers=8, device=dev))
             dt, r = _time(interp, fn, args)
             out[dev if dev != "cpu" else plan] = dt; results[plan + dev] = r

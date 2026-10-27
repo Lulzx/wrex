@@ -122,6 +122,15 @@ class TestConformance(unittest.TestCase):
         for plan in ("seq", "par"):
             self.assertEqual(run(src, plan), "6")
 
+    def test_tuple_treefold_contexts(self):
+        src = ("type E = Leaf(i64) | Node(E, E)\n"
+               "fn sc(e: E) -> (i64, i64):\n    treefold e:\n        Leaf(n) => (n, 1)\n        Node(a, b) =>\n            let (x1, c1) = a\n            let (x2, c2) = b\n            (x1 + x2, c1 + c2)\n"
+               "fn main(args: [Str]) -> Out:\n    print(sc(Node(Leaf(3), Node(Leaf(4), Leaf(5)))))\n")
+        prog, ck, an = compile_source(src)
+        self.assertIn("cert", an.records[0])
+        for plan in ("seq", "par", "auto"):
+            self.assertEqual(run(src, plan), "(12, 3)")
+
 class TestCodegen(unittest.TestCase):
     def _run_c(self, src, fn, stdin):
         import subprocess, os, tempfile
@@ -158,6 +167,19 @@ class TestCodegen(unittest.TestCase):
         f6 = ("fn f(xs: [int]) -> (int, int):\n    fold(xs, (0, 1), ((a, b), x) => (a + x, b * 2))\n"
               "fn main(args: [Str]) -> Out:\n    print(f([1]))\n")
         self.assertEqual(self._run_c(f6, "f", "3 1 2 3 0 1"), "6 8")
+
+    def test_c_multi_control_f5(self):
+        src = ("type Mode = InWord | Gap\n"
+               "fn f(text: [u8]) -> ((Mode, bool), int):\n    fold(text, ((Gap, false), 0), (((m, f), n), c) =>\n"
+               "        if c == 32 then ((if f then Gap else m, f), n) else ((InWord, true), if m == Gap then n + 1 else n))\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([104]))\n")
+        # combined control index: (InWord, true) is index 1 in enumeration order; payload 2
+        self.assertEqual(self._run_c(src, "f", "8 104 105 32 116 104 101 114 101 2 0"), "1 2")
+
+class TestFuzz(unittest.TestCase):
+    def test_fuzz_small(self):
+        from wrex.fuzz import fuzz
+        self.assertEqual(fuzz(iters=25, seed=7), [])
 
 class TestBench(unittest.TestCase):
     def test_bench_all_plans_agree(self):

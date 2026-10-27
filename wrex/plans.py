@@ -52,6 +52,7 @@ def fold(interp,node,xs,s0,step):
                 if r is not gpu.UNAVAILABLE: return r
     if cfg.plan=='seq' or cert is None: return _seq_fold(interp,xs,s0,step)
     if cfg.plan=='auto':
+        if cert.cost>costmod.REP_BENEFIT_MAX_COST: return _seq_fold(interp,xs,s0,step)
         costs=costmod.fold_costs(len(xs),cfg.workers,cert,costmod.op_count(getattr(cert,'step_node',None)))
         if min(costs,key=costs.get)!='ParFold': return _seq_fold(interp,xs,s0,step)
     if len(xs)==0: return s0
@@ -83,6 +84,7 @@ def scan(interp,node,xs,s0,step):
                 if r is not gpu.UNAVAILABLE: return r
     if cfg.plan=='seq' or cert is None: return _seq_scan(interp,xs,s0,step)
     if cfg.plan=='auto':
+        if cert.cost>costmod.REP_BENEFIT_MAX_COST: return _seq_scan(interp,xs,s0,step)
         costs=costmod.scan_costs(len(xs),cfg.workers,cert,costmod.op_count(getattr(cert,'step_node',None)))
         if min(costs,key=costs.get)!='ParScan': return _seq_scan(interp,xs,s0,step)
     n=len(xs)

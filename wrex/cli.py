@@ -63,6 +63,9 @@ def main(argv=None):
     if cmd=='bench':
         from .bench import main as bench_main
         return bench_main(argv[1:])
+    if cmd=='fuzz':
+        from .fuzz import main as fuzz_main
+        return fuzz_main(argv[1:])
     if cmd=='codegen':
         fn=None; out=None; rest=[]
         i=1

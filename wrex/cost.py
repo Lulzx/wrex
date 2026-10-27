@@ -2,6 +2,12 @@ import math, json, os, time
 
 CAL_PATH=os.path.join(os.path.expanduser("~"),".wrex-calibration.json")
 CAL={"c_sync":10.0,"c_op":1.0,"kappa":2.0,"kappa_prime":1.0,"beta":1e9,"c_launch":5000.0}
+# Representation-size-vs-benefit threshold (spec open question 2): a
+# representation whose compose costs more than this many abstract ops is
+# never selected for a parallel plan, however large n is, because its
+# per-element rho cost (which grows with the same size for F4/F5) cannot
+# amortize in this cost model.
+REP_BENEFIT_MAX_COST=4096
 def load_cal():
     cal=dict(CAL)
     try:

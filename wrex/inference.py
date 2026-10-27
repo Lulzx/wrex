@@ -18,6 +18,7 @@ def sym_vars(s):
 
 def eval_sym(interp,s,env,comp):
     k=s[0]
+    if k=='proj': return eval_sym(interp,s[1],env,comp)[s[2]]
     if k=='var': return comp[s[1]]
     if k=='nleaf': return env[s[1]]
     if k=='leaf': return interp.eval_expr(s[1],env)
@@ -149,9 +150,11 @@ class SymBuilder:
         return self.build(blk.expr,local)
     def bind_sym(self,pat,s,local):
         if isinstance(pat,N.PVar): local[pat.name]=s
-        elif isinstance(pat,N.PTuple) and s[0]=='tuple':
-            for p,x in zip(pat.items,s[1]): self.bind_sym(p,x,local)
-        elif isinstance(pat,N.PVar): local[pat.name]=s
+        elif isinstance(pat,N.PTuple):
+            if s[0]=='tuple':
+                for p,x in zip(pat.items,s[1]): self.bind_sym(p,x,local)
+            else:
+                for i,p in enumerate(pat.items): self.bind_sym(p,('proj',s,i),local)
     def build(self,e,local):
         if isinstance(e,N.Block): return self.build_block(e,local)
         if isinstance(e,N.Var):
@@ -606,7 +609,11 @@ def infer_treefold(node,types,fns):
     """Returns (ctx Cert-like or None, obstruction or None). Cert per (ctor,pos)."""
     T=node.scrut.ty; V=node.ty
     if not isinstance(T,str) or T not in types: return None,Obstruction("treefold scrutinee is not an algebraic type")
-    if isinstance(V,tuple): return None,Obstruction("context inference for tuple-valued tree folds is not supported; ForkJoin remains available")
+    # result may be a tuple: the hole is then a tuple of state components
+    if isinstance(V,tuple) and V and V[0]=='tuple':
+        vtys=list(V[1]); m=len(vtys)
+    else:
+        vtys=[V]; m=1
     per={}
     # try common F1 first, then F3: infer each context with numeric group and check family match
     candidates=[]
@@ -620,11 +627,47 @@ def infer_treefold(node,types,fns):
             if ft!=T: continue
             if not isinstance(p,N.PVar): return None,Obstruction(f"context for {pat.name} field {j}: recursive field is not a simple variable")
             hole=p.name
-            builder=SymBuilder({hole:0},())
+            builder=SymBuilder({hole:0} if m==1 else {},())
             # other pattern vars are coeff leaves via Var fallback (not state vars) - good
-            s=builder.build_block(blk,{})
-            candidates.append(((pat.name,j),s))
+            seed={} if m==1 else {hole:('tuple',[('var',i) for i in range(m)])}
+            s=builder.build_block(blk,seed)
+            if m>1:
+                if s[0]!='tuple' or len(s[1])!=m: return None,Obstruction(f"context for {pat.name} field {j}: arm does not return a {m}-tuple")
+                candidates.append(((pat.name,j),list(s[1])))
+            else:
+                candidates.append(((pat.name,j),s))
     if not candidates: return None,Obstruction("no recursive fields; contraction is unnecessary")
+    if m>1:
+        # componentwise inference per context, then a forced common F2 ring form
+        certs={}; compatible=True; famkey=None
+        for key,syms in candidates:
+            r=infer_groups(syms,list(range(m)),vtys,[f"v{i}" for i in range(m)],types,False,None)
+            if not isinstance(r,Cert): compatible=False; break
+            fk=(r.kind, type(r.family).__name__, getattr(r.family,'semiring',None), getattr(r.family,'k',None), getattr(r.family,'op',None))
+            if famkey is None: famkey=fk
+            elif fk!=famkey: compatible=False; break
+            certs[key]=r
+        if compatible and certs:
+            fam=next(iter(certs.values())).family
+            tc=Cert('CTX',fam,list(range(m)),per=certs); tc.l3="context L3 discharged by normalization (spec 9.2)"; return tc,None
+        # forced F2 over a ring for every context
+        certs={}; ok=True
+        for key,syms in candidates:
+            try:
+                polys=[sym_to_poly(s) for s in syms]
+                if any(len(mono)>1 for p in polys for mono in p): ok=False; break
+            except NotNormal: ok=False; break
+            coeffs=[]
+            for r in range(m):
+                for j in range(m): coeffs.append(polys[r].get((j,),ZERO))
+                coeffs.append(polys[r].get((),ZERO))
+            for j in range(m): coeffs.append(ZERO)
+            coeffs.append(ONE)
+            certs[key]=Cert('F2',F.F2(m,"ring",vtys[0] if isinstance(vtys[0],str) else "int"),list(range(m)),coeffs=coeffs)
+        if ok and certs:
+            fam=next(iter(certs.values())).family
+            tc=Cert('CTX',fam,list(range(m)),per=certs); tc.l3="context L3 discharged by ring normalization (spec 9.2)"; return tc,None
+        return None,Obstruction("a tuple-valued arm is not affine in a single child result, so no context representation exists")
     # F1 for all?
     for mode in ('F1','F3','F0'):
         certs={}; ok=True
