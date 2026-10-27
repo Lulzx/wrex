@@ -23,6 +23,16 @@ def _ev(interp,cert,elem,s0):
     out=cert.ev_state(elem,vals)
     return assemble(cert.state_skel,out)
 
+class _nested_seq:
+    """Scheduling rule for nested parallelism (spec section 16, question 3):
+    while a parallel plan is evaluating step functions (rho or replay), any
+    fold/scan/treefold inside those steps runs sequentially. The outer plan
+    owns the parallelism; nested plans would oversubscribe and, in this
+    runtime, would interleave plan decisions unpredictably."""
+    def __init__(self,interp): self.interp=interp
+    def __enter__(self): self.interp.parallel_depth=getattr(self.interp,'parallel_depth',0)+1
+    def __exit__(self,*a): self.interp.parallel_depth-=1
+
 def _seq_fold(interp,xs,s0,step):
     s=s0
     for x in xs: s=interp.call_value(step,(s,x))
@@ -33,7 +43,7 @@ def _seq_scan(interp,xs,s0,step):
     return out
 
 def _forced_seq(interp):
-    return any(fn in interp.seq_fns for fn in interp.fn_stack)
+    return any(fn in interp.seq_fns for fn in interp.fn_stack) or getattr(interp,'parallel_depth',0)>0
 
 def fold(interp,node,xs,s0,step):
     cert=_cert_for(interp,node)
@@ -48,7 +58,8 @@ def fold(interp,node,xs,s0,step):
                 cal=costmod.load_cal()
                 use=costmod.gpu_fold_cost(len(xs),cert,cal) < len(xs)*costmod.op_count(getattr(cert,'step_node',None))
             if use:
-                r=gpu.gpu_fold(interp,node,xs,s0,step,cert)
+                with _nested_seq(interp):
+                    r=gpu.gpu_fold(interp,node,xs,s0,step,cert)
                 if r is not gpu.UNAVAILABLE: return r
     if cfg.plan=='seq' or cert is None: return _seq_fold(interp,xs,s0,step)
     if cfg.plan=='auto':
@@ -56,17 +67,18 @@ def fold(interp,node,xs,s0,step):
         costs=costmod.fold_costs(len(xs),cfg.workers,cert,costmod.op_count(getattr(cert,'step_node',None)))
         if min(costs,key=costs.get)!='ParFold': return _seq_fold(interp,xs,s0,step)
     if len(xs)==0: return s0
-    elems=[_rho(interp,cert,x,i,step) for i,x in enumerate(xs)]
-    # balanced tree reduction (spec 8.2)
-    while len(elems)>1:
-        nxt=[]
-        for i in range(0,len(elems)-1,2): nxt.append(cert.family.compose(elems[i],elems[i+1]))
-        if len(elems)%2: nxt.append(elems[-1])
-        elems=nxt
-    elem=elems[0]
-    if isinstance(elem,F.TrapMark): return _seq_fold(interp,xs,s0,step)  # replays to exact trap
-    try: return _ev(interp,cert,elem,s0)
-    except Trap: return _seq_fold(interp,xs,s0,step)
+    with _nested_seq(interp):
+        elems=[_rho(interp,cert,x,i,step) for i,x in enumerate(xs)]
+        # balanced tree reduction (spec 8.2)
+        while len(elems)>1:
+            nxt=[]
+            for i in range(0,len(elems)-1,2): nxt.append(cert.family.compose(elems[i],elems[i+1]))
+            if len(elems)%2: nxt.append(elems[-1])
+            elems=nxt
+        elem=elems[0]
+        if isinstance(elem,F.TrapMark): return _seq_fold(interp,xs,s0,step)  # replays to exact trap
+        try: return _ev(interp,cert,elem,s0)
+        except Trap: return _seq_fold(interp,xs,s0,step)
 
 def scan(interp,node,xs,s0,step):
     cert=_cert_for(interp,node)
@@ -80,7 +92,8 @@ def scan(interp,node,xs,s0,step):
                 cal=costmod.load_cal()
                 use=costmod.gpu_scan_cost(len(xs),cert,cal) < len(xs)*costmod.op_count(getattr(cert,'step_node',None))
             if use:
-                r=gpu.gpu_scan(interp,node,xs,s0,step,cert)
+                with _nested_seq(interp):
+                    r=gpu.gpu_scan(interp,node,xs,s0,step,cert)
                 if r is not gpu.UNAVAILABLE: return r
     if cfg.plan=='seq' or cert is None: return _seq_scan(interp,xs,s0,step)
     if cfg.plan=='auto':
@@ -91,28 +104,29 @@ def scan(interp,node,xs,s0,step):
     if n==0: return []
     p=max(1,min(cfg.workers,n))
     bounds=[(b*n//p,(b+1)*n//p) for b in range(p)]
-    # Phase 1: summarize blocks
-    summaries=[]
-    for a,b in bounds:
-        elem=cert.family.identity()
-        for i in range(a,b): elem=cert.family.compose(elem,_rho(interp,cert,xs[i],i,step))
-        summaries.append(elem)
-    # Phase 2: exclusive prefixes -> block start states
-    starts=[]; prefix=cert.family.identity()
-    try:
-        for b in range(p):
-            starts.append(_ev(interp,cert,prefix,s0))
-            prefix=cert.family.compose(prefix,summaries[b])
-    except Trap:
-        return _seq_scan(interp,xs,s0,step)
-    if isinstance(prefix,F.TrapMark): return _seq_scan(interp,xs,s0,step)
-    # Phase 3: replay step through each block
-    out=[None]*n
-    for (a,b),start in zip(bounds,starts):
-        s=start
-        for i in range(a,b):
-            s=interp.call_value(step,(s,xs[i])); out[i]=s
-    return out
+    with _nested_seq(interp):
+        # Phase 1: summarize blocks
+        summaries=[]
+        for a,b in bounds:
+            elem=cert.family.identity()
+            for i in range(a,b): elem=cert.family.compose(elem,_rho(interp,cert,xs[i],i,step))
+            summaries.append(elem)
+        # Phase 2: exclusive prefixes -> block start states
+        starts=[]; prefix=cert.family.identity()
+        try:
+            for b in range(p):
+                starts.append(_ev(interp,cert,prefix,s0))
+                prefix=cert.family.compose(prefix,summaries[b])
+        except Trap:
+            return _seq_scan(interp,xs,s0,step)
+        if isinstance(prefix,F.TrapMark): return _seq_scan(interp,xs,s0,step)
+        # Phase 3: replay step through each block
+        out=[None]*n
+        for (a,b),start in zip(bounds,starts):
+            s=start
+            for i in range(a,b):
+                s=interp.call_value(step,(s,xs[i])); out[i]=s
+        return out
 
 # ---------------- tree folds
 class _W:
@@ -144,12 +158,13 @@ def treefold(interp,node,env):
         if min(costs,key=costs.get)!='Contract':
             return interp.treefold_seq(tree,node.arms,env)
     try:
-        if cfg.device not in (None,'cpu'):
-            from . import gpu
-            if gpu.available():
-                r=gpu.gpu_contract(interp,node,tree,ctx,env)
-                if r is not gpu.UNAVAILABLE: return r
-        return _contract(interp,node,tree,ctx,env)
+        with _nested_seq(interp):
+            if cfg.device not in (None,'cpu'):
+                from . import gpu
+                if gpu.available():
+                    r=gpu.gpu_contract(interp,node,tree,ctx,env)
+                    if r is not gpu.UNAVAILABLE: return r
+            return _contract(interp,node,tree,ctx,env)
     except Trap:
         return interp.treefold_seq(tree,node.arms,env)  # re-runs to exact first trap (spec 9.4)
 

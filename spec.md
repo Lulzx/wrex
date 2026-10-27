@@ -1,6 +1,6 @@
 # Wrex Language Specification
 
-**Version:** 0.4
+**Version:** 0.5
 **Status:** Implemented. The reference implementation covers Sections 1–14: parser, type checker, reference interpreter, representation inference for F0–F6, CPU plans, tree contraction, the tinygrad backend, a C code generator for certified folds and scans in all families F0-F6, and GPU tree contraction for F1 contexts (see the repository README for the exact backend coverage and remaining gaps).
 
 ---
@@ -552,7 +552,7 @@ For example, a tokenizer with 12 control states and a counter payload (F5 over F
 
 `f64` values may appear anywhere, but no family in version 0.1 admits `f64` state, because floating-point addition and multiplication are not associative and law L2 fails. Folds and scans with `f64` state always use `Seq`. Maps over `f64` are parallel, since they involve no reassociation.
 
-A future version may add an explicit `reassoc` annotation that permits parallel plans for `f64` reductions. Such programs would fall outside the plan-independence guarantee, so the annotation would have to state an error bound and the compiler would have to document the exact summation order of each plan.
+Since version 0.5, an explicit `@reassoc` annotation on a function permits parallel plans for `f64` folds and scans in that function. Such programs fall outside the plan-independence guarantee: parallel plans combine elements by the balanced pairing of Section 8 (adjacent pairs, left operand first, odd element carried), so the summation order — and therefore rounding — differs from the sequential left-to-right order. Sequential plans remain exact. `wrex explain` marks every certificate produced under `@reassoc`. No error bound is stated; callers who need one should not use the annotation.
 
 ---
 
@@ -815,7 +815,7 @@ The contribution Wrex aims to make is the combination: representation inference 
 
 1. **Inference completeness.** For which classes of step functions is the search in Section 7 complete? A characterization for F1–F3 relative to the normal forms should be achievable.
 2. **Representation size versus benefit.** F4 always applies to finite state, but tables of 256 entries may never pay off. Should the compiler stop searching above a cost threshold?
-3. **Nested parallelism.** How should a parallel scan whose step contains its own fold be scheduled? A flattening transformation is likely needed.
+3. **Nested parallelism.** How should a parallel scan whose step contains its own fold be scheduled? A flattening transformation is likely needed. (Version 0.5 adopts an interim rule: the outer plan owns the parallelism, and folds inside a step being evaluated by a parallel plan run sequentially.)
 4. **User-defined families.** Could users supply new families together with mechanized proofs of their laws, without enlarging the trusted base?
 5. **Floating point.** What should a `reassoc` annotation promise, and how should its error bound be expressed and checked?
 6. **GPU contraction.** Tree contraction relies on pointer-based random mating. Could a level-synchronous variant over node arrays be expressed as tinygrad gathers and still be competitive?

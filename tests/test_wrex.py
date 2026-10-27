@@ -131,6 +131,24 @@ class TestConformance(unittest.TestCase):
         for plan in ("seq", "par", "auto"):
             self.assertEqual(run(src, plan), "(12, 3)")
 
+    def test_reassoc_annotation(self):
+        src = ("@reassoc\nfn total(xs: [f64]) -> f64:\n    fold(xs, 0.0, (s, x) => s + x)\n"
+               "fn main(args: [Str]) -> Out:\n    print(total([10000000000000000.0, 1.0, -10000000000000000.0, 1.0]))\n")
+        prog, ck, an = compile_source(src)
+        self.assertTrue(an.records[0]["cert"].reassoc)
+        self.assertEqual(run(src, "seq"), "1.0")
+        self.assertEqual(run(src, "par"), "0")  # reassociated rounding; outside the guarantee, by opt-in
+        src2 = src.replace("@reassoc\n", "")
+        prog, ck, an = compile_source(src2)
+        self.assertIn("obs", an.records[0])  # without @reassoc, f64 stays sequential and exact
+        self.assertEqual(run(src2, "par"), "1.0")
+    def test_nested_fold_scheduling(self):
+        src = ("fn tri(n: int) -> int:\n    fold(range(1, n + 1), 0, (s, x) => s + x)\n"
+               "fn f(xs: [int]) -> int:\n    fold(xs, 0, (s, x) => s + tri(x))\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([1, 2, 3, 4]))\n")
+        for plan in ("seq", "par", "auto"):
+            self.assertEqual(run(src, plan), "20")
+
 class TestCodegen(unittest.TestCase):
     def _run_c(self, src, fn, stdin):
         import subprocess, os, tempfile
@@ -218,6 +236,17 @@ class TestGPU(unittest.TestCase):
             prog, ck, an = compile_source(src)
             interp = make_interpreter(prog, an, Config(plan="par", workers=8, device="metal"))
             self.assertEqual(fmt(run_main(interp, [])), want)
+    def test_gpu_f3_context_contraction(self):
+        from wrex import gpu
+        if not gpu.available():
+            self.skipTest("tinygrad not installed")
+        src = ("type E = Leaf(i64) | Cap(E) | Bump(E)\n"
+               "fn f(e: E) -> i64:\n    treefold e:\n        Leaf(n) => n\n        Cap(a) => min(a, 10)\n        Bump(a) => a + 3\n"
+               "fn main(args: [Str]) -> Out:\n    print(f(Cap(Bump(Cap(Bump(Leaf(9)))))))\n")
+        prog, ck, an = compile_source(src)
+        self.assertEqual(an.records[0]["cert"].family.name, "F3")
+        interp = make_interpreter(prog, an, Config(plan="par", workers=8, device="metal"))
+        self.assertEqual(fmt(run_main(interp, [])), "10")
     def test_gpu_tree_contraction_matches(self):
         from wrex import gpu
         if not gpu.available():

@@ -226,8 +226,10 @@ def gpu_contract(interp,node,tree,ctx,env):
     """GPU tree contraction (spec 9.3/13.5): rake and unary conversion run
     through the same exact arm evaluation as the CPU plan, while each
     round's independent ctx-ctx compressions (child ⋄ parent) are composed
-    as one batched tinygrad operation over F1 context fields."""
-    if ctx is None or any(c.kind!='F1' for c in ctx.per.values()): return UNAVAILABLE
+    as one batched tinygrad operation over the context family's fields
+    (F0, F1, F3, and F2 including tropical and tuple-valued contexts)."""
+    if ctx is None or len({c.kind for c in ctx.per.values()})!=1: return UNAVAILABLE
+    if next(iter(ctx.per.values())).kind not in ('F0','F1','F2','F3'): return UNAVAILABLE
     try:
         from tinygrad import Tensor
         from . import plans
@@ -287,15 +289,20 @@ def gpu_contract(interp,node,tree,ctx,env):
                         if isinstance(f,plans._W): collect(f)
             collect(root)
             if pairs:
-                if any(not isinstance(v,(int,float)) or isinstance(v,bool) or abs(v)>=2**53 for w in pairs for e in (w.elem,w.child.elem) for v in e):
+                def flat(e):
+                    if isinstance(e,(list,tuple)):
+                        out=[]
+                        for x in e: out+=flat(x)
+                        return out
+                    return [e]
+                if any(not isinstance(v,(int,float)) or isinstance(v,bool) or abs(v)>=2**53 for w in pairs for e in (w.elem,w.child.elem) for v in flat(e)):
                     return UNAVAILABLE
-                ca=Tensor([float(w.child.elem[0]) for w in pairs]); cb=Tensor([float(w.child.elem[1]) for w in pairs])
-                pa=Tensor([float(w.elem[0]) for w in pairs]); pb=Tensor([float(w.elem[1]) for w in pairs])
-                na=(pa*ca).tolist(); nb=(pa*cb+pb).tolist()
-                def clean(v): return int(v) if float(v)==int(v) else v
-                if not isinstance(na,list): na=[na]; nb=[nb]
-                for w,a,b in zip(pairs,na,nb):
-                    child=w.child; w.elem=(clean(a),clean(b)); w.child=child.child
+                rep=next(iter(ctx.per.values()))
+                cfields=_fields(rep,[w.child.elem for w in pairs],Tensor)
+                pfields=_fields(rep,[w.elem for w in pairs],Tensor)
+                composed=_clean(rep,_to_elems(rep,_compose(rep,cfields,pfields,Tensor)))
+                for w,elem in zip(pairs,composed):
+                    child=w.child; w.elem=elem; w.child=child.child
                 continue
             root,changed=do_pass(root)
             if not changed and root.kind!='val': return UNAVAILABLE

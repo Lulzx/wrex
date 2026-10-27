@@ -27,12 +27,12 @@ def analyze(prog,checker):
     subst=checker.subst
     for d in prog.decls:
         if not isinstance(d,N.FnDecl): continue
-        finite='@finite' in d.annotations
-        def visit(node,fn,d=d,finite=finite):
+        finite='@finite' in d.annotations; reassoc='@reassoc' in d.annotations
+        def visit(node,fn,d=d,finite=finite,reassoc=reassoc):
             if isinstance(node,N.Call) and isinstance(node.f,N.Var) and node.f.name in ('fold','scan') and len(node.args)==3:
                 xt=resolve(node.args[0].ty,subst); st=resolve(node.args[1].ty,subst)
                 xt_el=xt[1] if isinstance(xt,tuple) and xt and xt[0]=='list' else None
-                r=infer_step(node.args[2],st,xt_el,fns,types,finite)
+                r=infer_step(node.args[2],st,xt_el,fns,types,finite,reassoc)
                 rec={"kind":node.f.name,"line":node.line,"node":node,"fn":d.name,"state_ty":st,"input_ty":xt_el}
                 if isinstance(r,Cert): rec["cert"]=r
                 else: rec["obs"]=r

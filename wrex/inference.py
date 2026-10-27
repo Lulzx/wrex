@@ -421,9 +421,9 @@ def _l3_for(kind):
             'F4':"holds by construction (tabulation)",'F5':"construction for control; payload checked per control state",
             'F6':"discharged componentwise"}[kind]
 
-def infer_numeric_group(syms,scope,tys,names,trap_reason):
+def infer_numeric_group(syms,scope,tys,names,trap_reason,reassoc=False):
     if trap_reason: return Obstruction(trap_reason+" (numeric families rejected before simplification, spec 7.3)")
-    if any(t=="f64" for t in tys): return Obstruction("`f64` state: floating-point arithmetic is not associative, so no family applies (Section 11)")
+    if any(t=="f64" for t in tys) and not reassoc: return Obstruction("`f64` state: floating-point arithmetic is not associative, so no family applies (Section 11). Add @reassoc to opt into reassociated floating-point plans, which leave the plan-independence guarantee.")
     if len(scope)==1:
         i=scope[0]; s=syms[0]; ty=tys[0]
         # F0
@@ -495,11 +495,11 @@ def make_f4(scope,tys,types,finite_ctx):
     else: qvalues=enum_values(('tuple',tys),types)
     c=Cert('F4',F.F4(qvalues),scope,qvalues=qvalues); c.l3=_l3_for('F4'); return c
 
-def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason):
+def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False):
     finite=[is_finite_type(t,types,finite_ctx) for t in tys]
     # numeric attempt when no user/bool control types present (bool handled by F0 too)
     if not any(finite) or all(isinstance(t,str) and (t in ("int","f64") or t in __import__('wrex.values',fromlist=['MACHINE']).MACHINE) for t in tys):
-        r=infer_numeric_group(syms,scope,tys,names,trap_reason)
+        r=infer_numeric_group(syms,scope,tys,names,trap_reason,reassoc)
         if isinstance(r,Cert): return r
         if all(finite):
             f4=make_f4(scope,tys,types,finite_ctx)
@@ -507,7 +507,7 @@ def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason):
         return r
     if all(finite):
         # try cheap numeric for single bool/int control (e.g. bool with and/or)
-        r=infer_numeric_group(syms,scope,tys,names,None) if len(scope)==1 and tys[0]=="bool" else None
+        r=infer_numeric_group(syms,scope,tys,names,None,reassoc) if len(scope)==1 and tys[0]=="bool" else None
         if isinstance(r,Cert): return r
         return make_f4(scope,tys,types,finite_ctx)
     # mixed control + payload (F5)
@@ -519,7 +519,7 @@ def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason):
             return Obstruction(f"The control state `{names[scope[k]] or 'state'}` depends on the numeric state `{names[list(deps)[0]] or 'state'}`. Finite-control families require the control state to depend only on itself and the input.")
     mapping={scope[k]:('nleaf',names[scope[k]]) for k in ctrl}
     pay_syms=[remap_sym(syms[k],mapping) for k in pay]
-    payload=infer_group(pay_syms,pay_scope,[tys[k] for k in pay],names,types,finite_ctx,trap_reason)
+    payload=infer_group(pay_syms,pay_scope,[tys[k] for k in pay],names,types,finite_ctx,trap_reason,reassoc)
     if not isinstance(payload,Cert): return payload
     if payload.kind not in ('F0','F1','F2','F3','F6'):
         return Obstruction(f"payload family {payload.kind} is not admitted in F5 (spec 6.6 allows F0-F3 and F6)")
@@ -532,7 +532,7 @@ def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason):
            ctrl_names=[names[scope[k]] for k in ctrl],qvalues=qvalues)
     c.payload_scope=pay_scope; c.l3=_l3_for('F5'); return c
 
-def infer_groups(syms,scope,tys,names,types,finite_ctx,trap_reason):
+def infer_groups(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False):
     # connected components of dependency graph
     parent=list(range(len(scope)))
     def find(a):
@@ -548,10 +548,10 @@ def infer_groups(syms,scope,tys,names,types,finite_ctx,trap_reason):
     groups={}
     for k in range(len(scope)): groups.setdefault(find(k),[]).append(k)
     if len(groups)==1:
-        return infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason)
+        return infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc)
     subs=[]
     for ks in groups.values():
-        r=infer_group([syms[k] for k in ks],[scope[k] for k in ks],[tys[k] for k in tys and ks],names,types,finite_ctx,trap_reason)
+        r=infer_group([syms[k] for k in ks],[scope[k] for k in ks],[tys[k] for k in tys and ks],names,types,finite_ctx,trap_reason,reassoc)
         if not isinstance(r,Cert):
             if all(is_finite_type(t,types,finite_ctx) for t in tys):
                 return make_f4(scope,tys,types,finite_ctx)
@@ -566,7 +566,7 @@ def pattern_names(pat,out):
     elif isinstance(pat,(N.PTuple,N.PCtor)):
         for p in pat.items: pattern_names(p,out)
 
-def infer_step(step_node,state_ty,input_ty,fns,types,finite_ctx):
+def infer_step(step_node,state_ty,input_ty,fns,types,finite_ctx,reassoc=False):
     """Returns Cert or Obstruction."""
     if isinstance(step_node,N.Var) and step_node.name in fns:
         d=fns[step_node.name]; params=d.params
@@ -598,10 +598,10 @@ def infer_step(step_node,state_ty,input_ty,fns,types,finite_ctx):
     syms=flatten_sym(skel,bodysym)
     if syms is None or len(syms)!=len(flat): return Obstruction("step does not return a state of the expected shape")
     trap_reason=trap_state_dependent(step_node,state_vars.keys())
-    cert=infer_groups(syms,list(range(len(flat))),tys,names,types,finite_ctx,trap_reason)
+    cert=infer_groups(syms,list(range(len(flat))),tys,names,types,finite_ctx,trap_reason,reassoc)
     if isinstance(cert,Cert):
         cert.state_skel=skel; cert.flat_tys=tys; cert.state_names=names
-        cert.step_node=step_node; cert.input_pat=pats[1]
+        cert.step_node=step_node; cert.input_pat=pats[1]; cert.reassoc=bool(reassoc and any(t=='f64' for t in tys))
     return cert
 
 # ---------- tree contexts

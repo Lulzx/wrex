@@ -1,0 +1,37 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+        gpu: [false, true]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          if [ "${{ matrix.gpu }}" = "true" ]; then pip install -e '.[gpu]'; else pip install -e .; fi
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: CLI smoke tests
+        run: |
+          wrex run examples/word_count.wrx
+          wrex run --plan=par examples/balances.wrx
+          wrex explain examples/logistic.wrx
+          wrex test examples/stock.wrx
+      - name: Codegen smoke test
+        run: |
+          wrex codegen examples/balances.wrx -o /tmp/bal.c
+          cc -O2 -o /tmp/bal /tmp/bal.c
+          echo "3 1 10 1 20 2 5 0" | /tmp/bal 4
+      - name: Differential fuzzer
+        run: wrex fuzz --iters=60 --seed=11
+      - name: Benchmarks (all plans must agree)
+        run: wrex bench --n=200
