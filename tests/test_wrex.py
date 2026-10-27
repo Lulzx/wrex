@@ -114,6 +114,14 @@ class TestConformance(unittest.TestCase):
             ok, outs = differential(src)
             self.assertTrue(ok, f"{name}: {outs}")
 
+    def test_match_in_step_infers(self):
+        src = ("fn f(xs: [int]) -> int:\n    fold(xs, 0, (s, x) =>\n        match x:\n            0 => s\n            _ => s + x)\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([1, 0, 2, 0, 3]))\n")
+        prog, ck, an = compile_source(src)
+        self.assertIn("cert", an.records[0])
+        for plan in ("seq", "par"):
+            self.assertEqual(run(src, plan), "6")
+
 class TestCodegen(unittest.TestCase):
     def _run_c(self, src, fn, stdin):
         import subprocess, os, tempfile
@@ -140,11 +148,16 @@ class TestCodegen(unittest.TestCase):
         src = ("fn fib(steps: [u64]) -> (u64, u64):\n    fold(steps, (0, 1), ((a, b), k) => (b, a + k * b))\n"
                "fn main(args: [Str]) -> Out:\n    print(fib([1]))\n")
         self.assertEqual(self._run_c(src, "fib", "6 1 1 1 1 1 1 0 1"), "8 13")
-    def test_c_unsupported_family_reports(self):
-        from wrex.codegen import generate_c, CodegenError
-        prog, ck, an = compile_source(open("examples/word_count.wrx").read())
-        with self.assertRaises(CodegenError):
-            generate_c(prog, an, "word_count")
+    def test_c_f5_word_count(self):
+        self.assertEqual(self._run_c(open("examples/word_count.wrx").read(), "word_count",
+                                     "8 104 105 32 116 104 101 114 101 1 0"), "0 2")
+    def test_c_f4_and_f6(self):
+        f4 = ("type Light = Red | Green\nfn f(xs: [int]) -> Light:\n    fold(xs, Red, (s, x) => if x > 0 then Green else Red)\n"
+              "fn main(args: [Str]) -> Out:\n    print(f([0]))\n")
+        self.assertEqual(self._run_c(f4, "f", "3 0 1 0 0"), "0")
+        f6 = ("fn f(xs: [int]) -> (int, int):\n    fold(xs, (0, 1), ((a, b), x) => (a + x, b * 2))\n"
+              "fn main(args: [Str]) -> Out:\n    print(f([1]))\n")
+        self.assertEqual(self._run_c(f6, "f", "3 1 2 3 0 1"), "6 8")
 
 class TestBench(unittest.TestCase):
     def test_bench_all_plans_agree(self):
@@ -183,6 +196,16 @@ class TestGPU(unittest.TestCase):
             prog, ck, an = compile_source(src)
             interp = make_interpreter(prog, an, Config(plan="par", workers=8, device="metal"))
             self.assertEqual(fmt(run_main(interp, [])), want)
+    def test_gpu_tree_contraction_matches(self):
+        from wrex import gpu
+        if not gpu.available():
+            self.skipTest("tinygrad not installed")
+        src = ("type Expr = Num(i64) | Add(Expr, Expr) | Neg(Expr)\n"
+               "fn eval(e: Expr) -> i64:\n    treefold e:\n        Num(n) => n\n        Add(a, b) => a + b\n        Neg(a) => 0 - a\n"
+               "fn main(args: [Str]) -> Out:\n    print(eval(Add(Num(1), Add(Num(2), Add(Num(3), Neg(Num(4)))))))\n")
+        prog, ck, an = compile_source(src)
+        interp = make_interpreter(prog, an, Config(plan="par", workers=8, device="metal"))
+        self.assertEqual(fmt(run_main(interp, [])), "2")
 
 if __name__ == "__main__":
     unittest.main()

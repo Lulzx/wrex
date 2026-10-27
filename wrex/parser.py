@@ -173,25 +173,29 @@ class Parser:
         self.expect('else'); self.skip_nl(); els=self.parse_expr()
         return N.If(cond=cond,then=then,els=els,line=t.line)
 
-    def parse_match(self):
-        t=self.expect('match'); scrut=self.parse_expr(); self.expect(':'); self.skip_nl()
-        self.expect('INDENT'); arms=[]
+    def _parse_arms(self):
         self.skip_nl()
-        while self.peek().kind!='DEDENT':
+        arms=[]
+        if self.accept('INDENT'):
+            self.skip_nl()
+            while self.peek().kind!='DEDENT':
+                pat=self.parse_pattern(); self.expect('=>'); blk=self.parse_block()
+                arms.append((pat,blk)); self.skip_nl()
+            self.expect('DEDENT')
+            return arms
+        # arms inside brackets: NEWLINE-separated, terminated by ')' / EOF
+        while self.peek().kind not in (')','EOF','DEDENT'):
             pat=self.parse_pattern(); self.expect('=>'); blk=self.parse_block()
             arms.append((pat,blk)); self.skip_nl()
-        self.expect('DEDENT')
-        return N.Match(scrut=scrut,arms=arms,line=t.line)
+        return arms
+
+    def parse_match(self):
+        t=self.expect('match'); scrut=self.parse_expr(); self.expect(':')
+        return N.Match(scrut=scrut,arms=self._parse_arms(),line=t.line)
 
     def parse_treefold(self):
-        t=self.expect('treefold'); scrut=self.parse_expr(); self.expect(':'); self.skip_nl()
-        self.expect('INDENT'); arms=[]
-        self.skip_nl()
-        while self.peek().kind!='DEDENT':
-            pat=self.parse_pattern(); self.expect('=>'); blk=self.parse_block()
-            arms.append((pat,blk)); self.skip_nl()
-        self.expect('DEDENT')
-        return N.TreeFold(scrut=scrut,arms=arms,line=t.line)
+        t=self.expect('treefold'); scrut=self.parse_expr(); self.expect(':')
+        return N.TreeFold(scrut=scrut,arms=self._parse_arms(),line=t.line)
 
     def _bin(self,sub,ops):
         e=sub()

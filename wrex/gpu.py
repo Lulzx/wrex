@@ -11,6 +11,7 @@ the host — so a failure anywhere falls back to the exact CPU plan.
 """
 from .values import Trap
 from . import families as F
+from . import nodes as N
 
 UNAVAILABLE=object()
 _available=None
@@ -216,6 +217,89 @@ def gpu_fold(interp,node,xs,s0,step,cert):
         if cert.kind=='F4': elem=tuple(cert.family.q[int(round(v))] if isinstance(v,float) else v for v in elem)
         from .plans import _ev
         return _ev(interp,cert,elem,s0)
+    except Trap:
+        raise
+    except Exception:
+        return UNAVAILABLE
+
+def gpu_contract(interp,node,tree,ctx,env):
+    """GPU tree contraction (spec 9.3/13.5): rake and unary conversion run
+    through the same exact arm evaluation as the CPU plan, while each
+    round's independent ctx-ctx compressions (child ⋄ parent) are composed
+    as one batched tinygrad operation over F1 context fields."""
+    if ctx is None or any(c.kind!='F1' for c in ctx.per.values()): return UNAVAILABLE
+    try:
+        from tinygrad import Tensor
+        from . import plans
+        from .values import ADT
+        T=tree.type_name; ctor_fields={c:f for c,f in interp.types[T]}
+        def build(t):
+            if not isinstance(t,ADT): return plans._W('val',val=t)
+            fields=[build(fv) if ft==T else fv for ft,fv in zip(ctor_fields[t.ctor],t.fields)]
+            return plans._W('orig',ctor=t.ctor,fields=fields,raw=t)
+        def arm_vals(w,vals):
+            return [vals[j] if isinstance(f,plans._W) else f for j,f in enumerate(w.fields)]
+        def do_pass(w):
+            if w.kind=='val': return w,False
+            if w.kind=='ctx':
+                child,ch=do_pass(w.child)
+                if child.kind=='val': return plans._W('val',val=ctx.family.ev(w.elem,child.val)),True
+                return plans._W('ctx',elem=w.elem,child=child),ch
+            newfields=[]; changed=False
+            for f in w.fields:
+                if isinstance(f,plans._W):
+                    nf,c=do_pass(f); newfields.append(nf); changed=changed or c
+                else: newfields.append(f)
+            w2=plans._W('orig',ctor=w.ctor,fields=newfields,raw=w.raw)
+            unknown=[j for j,f in enumerate(newfields) if isinstance(f,plans._W) and f.kind!='val']
+            if not unknown:
+                vals={j:(f.val if isinstance(f,plans._W) else f) for j,f in enumerate(newfields)}
+                return plans._W('val',val=plans._eval_arm(interp,node.arms,w.ctor,arm_vals(w2,vals),env)),True
+            if len(unknown)==1:
+                j=unknown[0]; key=(w.ctor,j)
+                if key in ctx.per:
+                    vals={jj:(f.val if isinstance(f,plans._W) else f) for jj,f in enumerate(newfields) if jj!=j}
+                    env2=dict(env); pat=None
+                    for p_,b_ in node.arms:
+                        if isinstance(p_,N.PCtor) and p_.name==w.ctor: pat=p_
+                    fvals=[vals.get(jj,0) for jj in range(len(newfields))]
+                    for jj,(p_,v) in enumerate(zip(pat.items,fvals)):
+                        if jj!=j: interp.match_pattern(p_,v,env2)
+                    cert=ctx.per[key]
+                    def arm_of_hole(hole,j=j,w2=w2,vals=vals):
+                        vv=dict(vals); vv[j]=hole
+                        return plans._eval_arm(interp,node.arms,w2.ctor,arm_vals(w2,vv),env)
+                    elem=cert.rho_env(interp,env2,0,arm_of_hole)
+                    return plans._W('ctx',elem=elem,child=newfields[j]),True
+            return w2,changed
+        root=build(tree); guard=0
+        while root.kind!='val':
+            guard+=1
+            if guard>10000: return UNAVAILABLE
+            # collect independent ctx-ctx pairs (no pair shares a node)
+            pairs=[]
+            def collect(w):
+                if w.kind=='ctx' and w.child.kind=='ctx':
+                    pairs.append(w); collect(w.child.child); return
+                if w.kind=='ctx': collect(w.child); return
+                if w.kind=='orig':
+                    for f in w.fields:
+                        if isinstance(f,plans._W): collect(f)
+            collect(root)
+            if pairs:
+                if any(not isinstance(v,(int,float)) or isinstance(v,bool) or abs(v)>=2**53 for w in pairs for e in (w.elem,w.child.elem) for v in e):
+                    return UNAVAILABLE
+                ca=Tensor([float(w.child.elem[0]) for w in pairs]); cb=Tensor([float(w.child.elem[1]) for w in pairs])
+                pa=Tensor([float(w.elem[0]) for w in pairs]); pb=Tensor([float(w.elem[1]) for w in pairs])
+                na=(pa*ca).tolist(); nb=(pa*cb+pb).tolist()
+                def clean(v): return int(v) if float(v)==int(v) else v
+                if not isinstance(na,list): na=[na]; nb=[nb]
+                for w,a,b in zip(pairs,na,nb):
+                    child=w.child; w.elem=(clean(a),clean(b)); w.child=child.child
+                continue
+            root,changed=do_pass(root)
+            if not changed and root.kind!='val': return UNAVAILABLE
+        return root.val
     except Trap:
         raise
     except Exception:

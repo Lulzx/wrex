@@ -2,24 +2,26 @@
 
 The generated program implements the three-phase blocked scan / balanced
 fold of spec Section 8 with pthreads, using the same rho/compose/ev of the
-certificate. Input format: n followed by n * (input fields) integers on
-stdin. Output: the fold result, or the n scan results, whitespace separated.
+certificate. Protocol on stdin: free scalar parameters first (captured
+function variables), then n, then n * (input fields) integers, then the
+initial state. Finite states (F4, and F5 control) are exchanged as dense
+indices into the enumerated state set (spec 6.5). Output: the fold result,
+or the scan states, whitespace separated.
 
-Supported: scalar state (F0, F1, F3) and vector state (F2) over integer
-types, with scalar or tuple inputs whose coefficients are arithmetic
-expressions. C `int64_t` stands in for Wrex `int`, so exactness holds
-within int64 range (the same bound the GPU backend uses, spec 13.5.4);
-machine integer types wrap via unsigned arithmetic.
+All families F0-F6 are supported for folds; scans support every family
+whose ev(rho(x), s) reproduces the step, which the certificate guarantees.
+C `int64_t` stands in for Wrex `int`, so exactness holds within int64
+range (the same bound the GPU backend uses, spec 13.5.4).
 """
 from . import nodes as N
 from .inference import pattern_names
 
 class CodegenError(Exception): pass
 
-CTY = {"int": "int64_t", "i64": "int64_t", "u64": "uint64_t", "i32": "int32_t", "u32": "uint32_t", "u8": "uint8_t"}
+# Wrex user function name -> generated C function name, for coefficient calls
+FN_C = {}
 
-def _cexpr(e, env):
-    """AST (coefficient, no state vars) -> C expression. env: name->C var."""
+def _cexpr(e, env, ctor_map=None):
     if isinstance(e, N.Lit):
         if isinstance(e.value, bool): return "1" if e.value else "0"
         if isinstance(e.value, float): raise CodegenError("float coefficient not supported in C backend")
@@ -27,32 +29,46 @@ def _cexpr(e, env):
     if isinstance(e, N.Var):
         if e.name in env: return env[e.name]
         raise CodegenError(f"coefficient references unsupported name {e.name!r}")
+    if isinstance(e, N.CtorExpr):
+        if ctor_map and e.name in ctor_map and not e.args: return str(ctor_map[e.name])
+        raise CodegenError(f"unsupported constructor {e.name} in generated C")
     if isinstance(e, N.Unary):
-        return f"(!{_cexpr(e.e, env)})" if e.op == 'not' else f"(-{_cexpr(e.e, env)})"
+        return f"(!{_cexpr(e.e, env, ctor_map)})" if e.op == 'not' else f"(-{_cexpr(e.e, env, ctor_map)})"
     if isinstance(e, N.If):
-        return f"({_cexpr(e.cond, env)} ? {_cexpr(e.then, env)} : {_cexpr(e.els, env)})"
+        return f"({_cexpr(e.cond, env, ctor_map)} ? {_cexpr(e.then, env, ctor_map)} : {_cexpr(e.els, env, ctor_map)})"
     if isinstance(e, N.BinOp):
-        l, r = _cexpr(e.l, env), _cexpr(e.r, env)
+        l, r = _cexpr(e.l, env, ctor_map), _cexpr(e.r, env, ctor_map)
         if e.op in ('/', '%'):
-            fn = "wrex_sdiv" if e.op == '/' else "wrex_smod"
-            return f"{fn}({l}, {r})"
+            return f"{'wrex_sdiv' if e.op=='/' else 'wrex_smod'}({l}, {r})"
         op = {'and': '&&', 'or': '||'}.get(e.op, e.op)
         return f"({l} {op} {r})"
     if isinstance(e, N.Call) and isinstance(e.f, N.Var) and e.f.name in ('min', 'max', 'clamp'):
-        a = [_cexpr(x, env) for x in e.args]
+        a = [_cexpr(x, env, ctor_map) for x in e.args]
         if e.f.name == 'clamp': return f"wrex_clamp({a[0]}, {a[1]}, {a[2]})"
         return f"(({a[0]} {'<' if e.f.name=='min' else '>'} {a[1]}) ? {a[0]} : {a[1]})"
+    if isinstance(e, N.Call) and isinstance(e.f, N.Var) and e.f.name in FN_C:
+        a = [_cexpr(x, env, ctor_map) for x in e.args]
+        return f"{FN_C[e.f.name]}({', '.join(a)})"
     raise CodegenError(f"unsupported coefficient expression {type(e).__name__}")
 
-def _csym(s, env):
+def _csym(s, env, varmap=None, ctor_map=None):
     k = s[0]
-    if k == 'leaf': return _cexpr(s[1], env)
+    if k == 'var':
+        if varmap and s[1] in varmap: return varmap[s[1]]
+        raise CodegenError("symbolic state variable in coefficient position")
+    if k == 'leaf': return _cexpr(s[1], env, ctor_map)
+    if k == 'nleaf':
+        if s[1] in env: return env[s[1]]
+        raise CodegenError(f"unsupported named coefficient {s[1]}")
     if k == 'inf': return "WREX_PINF" if s[1] > 0 else "WREX_NINF"
-    if k == 'bin': return f"({_csym(s[2], env)} {'&&' if s[1]=='and' else '||' if s[1]=='or' else s[1] if s[1] not in ('/','%') else s[1]} {_csym(s[3], env)})" if s[1] not in ('/', '%') else f"({'wrex_sdiv' if s[1]=='/' else 'wrex_smod'}({_csym(s[2], env)}, {_csym(s[3], env)}))"
-    if k == 'un': return f"(!{_csym(s[2], env)})" if s[1] == 'not' else f"(-{_csym(s[2], env)})"
-    if k == 'if': return f"({_csym(s[1], env)} ? {_csym(s[2], env)} : {_csym(s[3], env)})"
+    if k == 'bin':
+        if s[1] in ('/', '%'): return f"{'wrex_sdiv' if s[1]=='/' else 'wrex_smod'}({_csym(s[2], env, varmap, ctor_map)}, {_csym(s[3], env, varmap, ctor_map)})"
+        op = {'and': '&&', 'or': '||'}.get(s[1], s[1])
+        return f"({_csym(s[2], env, varmap, ctor_map)} {op} {_csym(s[3], env, varmap, ctor_map)})"
+    if k == 'un': return f"(!{_csym(s[2], env, varmap, ctor_map)})" if s[1] == 'not' else f"(-{_csym(s[2], env, varmap, ctor_map)})"
+    if k == 'if': return f"({_csym(s[1], env, varmap, ctor_map)} ? {_csym(s[2], env, varmap, ctor_map)} : {_csym(s[3], env, varmap, ctor_map)})"
     if k == 'call':
-        a = [_csym(x, env) for x in s[2]]
+        a = [_csym(x, env, varmap, ctor_map) for x in s[2]]
         if s[1] == 'clamp': return f"wrex_clamp({a[0]}, {a[1]}, {a[2]})"
         return f"(({a[0]} {'<' if s[1]=='min' else '>'} {a[1]}) ? {a[0]} : {a[1]})"
     raise CodegenError(f"unsupported symbolic term {k}")
@@ -67,6 +83,147 @@ static i64 wrex_clamp(i64 v, i64 lo, i64 hi){ if(lo>hi){ fprintf(stderr,"trap: c
 static i64 wrex_addinf(i64 a, i64 b){ if(a>=WREX_PINF||b>=WREX_PINF) return WREX_PINF; if(a<=WREX_NINF||b<=WREX_NINF) return WREX_NINF; __int128 r=(__int128)a+b; if(r>WREX_PINF) return WREX_PINF; if(r<WREX_NINF) return WREX_NINF; return (i64)r; }
 """
 
+def _collect_coeff_syms(cert, acc):
+    for c in getattr(cert, 'coeffs', []) or []: acc.append(c)
+    for c in getattr(cert, 'ctrl_syms', []) or []: acc.append(c)
+    for sub in getattr(cert, 'subs', []) or []: _collect_coeff_syms(sub, acc)
+    if getattr(cert, 'payload', None) is not None: _collect_coeff_syms(cert.payload, acc)
+
+def _gen(cert, prefix, env, lines, fns, ctor_map=None):
+    """Emit element type/functions for a certificate. Returns (type, state words)."""
+    T = f"Elem_{prefix}"; fam = cert.family; k = cert.kind
+    idf, cof, evf, rhof = f"elem_{prefix}_ident", f"elem_{prefix}_compose", f"elem_{prefix}_ev", f"elem_{prefix}_rho"
+    if k == 'F0':
+        op = fam.op
+        body = {'+': "a + b", '*': "a * b", 'min': "a<b?a:b", 'max': "a>b?a:b", '&': "a & b", '|': "a | b", '^': "a ^ b", 'and': "a && b", 'or': "a || b"}[op]
+        ident = {'+': "0", '*': "1", 'min': "WREX_PINF", 'max': "WREX_NINF", '&': "-1", '|': "0", '^': "0", 'and': "1", 'or': "0"}[op]
+        g = _csym(cert.coeffs[0], env, ctor_map=ctor_map)
+        lines += [f"typedef i64 {T};",
+                  f"static {T} {idf}(void){{ return {ident}; }}",
+                  f"static {T} {cof}({T} a, {T} b){{ return {body}; }}",
+                  f"static void {evf}({T} r, const i64* s, i64* out){{ out[0] = {cof}(s[0], r); }}",
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; return {g}; }}"]
+        return T, 1
+    if k == 'F1':
+        a, b = _csym(cert.coeffs[0], env, ctor_map=ctor_map), _csym(cert.coeffs[1], env, ctor_map=ctor_map)
+        lines += [f"typedef struct {{ i64 a, b; }} {T};",
+                  f"static {T} {idf}(void){{ {T} e = {{1, 0}}; return e; }}",
+                  f"static {T} {cof}({T} x, {T} y){{ {T} e = {{y.a * x.a, y.a * x.b + y.b}}; return e; }}",
+                  f"static void {evf}({T} r, const i64* s, i64* out){{ out[0] = r.a * s[0] + r.b; }}",
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e = {{{a}, {b}}}; return e; }}"]
+        return T, 1
+    if k == 'F3':
+        a, l, h = (_csym(c, env, ctor_map=ctor_map) for c in cert.coeffs)
+        lines += [f"typedef struct {{ i64 a, l, h; }} {T};",
+                  f"static {T} {idf}(void){{ {T} e = {{0, WREX_NINF, WREX_PINF}}; return e; }}",
+                  f"static {T} {cof}({T} x, {T} y){{ i64 l = wrex_addinf(x.l, y.a); l = l<y.l?y.l:l; l = l>y.h?y.h:l; i64 h = wrex_addinf(x.h, y.a); h = h>y.h?y.h:h; h = h<y.l?y.l:h; {T} e = {{wrex_addinf(x.a, y.a), l, h}}; return e; }}",
+                  f"static void {evf}({T} r, const i64* s, i64* out){{ i64 v = wrex_addinf(s[0], r.a); out[0] = v<r.l?r.l:(v>r.h?r.h:v); }}",
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e = {{{a}, {l}, {h}}}; return e; }}"]
+        return T, 1
+    if k == 'F2':
+        kk = fam.k; n = kk + 1
+        coeffs = [_csym(c, env, ctor_map=ctor_map) for c in cert.coeffs]
+        flat = ", ".join(coeffs)
+        if fam.semiring == 'ring':
+            combine = "__int128 acc=0; for(int t=0;t<N;t++) acc += (__int128)y.m[i][t]*x.m[t][j]; e.m[i][j]=(i64)acc;"
+            evcombine = "__int128 acc=0; for(int j=0;j<K;j++) acc+=(__int128)r.m[i][j]*s[j]; acc += r.m[i][K]; out[i]=(i64)acc;"
+        elif fam.semiring == 'maxplus':
+            combine = "i64 acc=WREX_NINF; for(int t=0;t<N;t++){ i64 v=wrex_addinf(y.m[i][t], x.m[t][j]); acc = v>acc?v:acc; } e.m[i][j]=acc;"
+            evcombine = "i64 acc=WREX_NINF; for(int j=0;j<K;j++){ i64 v=wrex_addinf(r.m[i][j], s[j]); acc = v>acc?v:acc; } acc=wrex_addinf(acc, r.m[i][K]); out[i]=acc;"
+        else:
+            combine = "i64 acc=WREX_PINF; for(int t=0;t<N;t++){ i64 v=wrex_addinf(y.m[i][t], x.m[t][j]); acc = v<acc?v:acc; } e.m[i][j]=acc;"
+            evcombine = "i64 acc=WREX_PINF; for(int j=0;j<K;j++){ i64 v=wrex_addinf(r.m[i][j], s[j]); acc = v<acc?v:acc; } acc=wrex_addinf(acc, r.m[i][K]); out[i]=acc;"
+        combine = combine.replace("N", str(n)); evcombine = evcombine.replace("K", str(kk))
+        lines += [f"#define K_{prefix} {kk}", f"#define N_{prefix} {n}", f"typedef struct {{ i64 m[{n}][{n}]; }} {T};",
+                  f"static {T} {idf}(void){{ {T} e; for(int i=0;i<{n};i++) for(int j=0;j<{n};j++) e.m[i][j] = (i==j) ? {1 if fam.semiring=='ring' else 0} : {'0' if fam.semiring=='ring' else ('WREX_NINF' if fam.semiring=='maxplus' else 'WREX_PINF')}; return e; }}",
+                  f"static {T} {cof}({T} x, {T} y){{ {T} e; for(int i=0;i<{n};i++) for(int j=0;j<{n};j++){{ {combine} }} return e; }}",
+                  f"static void {evf}({T} r, const i64* s, i64* out){{ for(int i=0;i<{kk};i++){{ {evcombine} }} }}",
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; i64 flat[{n*n}] = {{{flat}}}; {T} e; for(int i=0;i<{n};i++) for(int j=0;j<{n};j++) e.m[i][j]=flat[i*{n}+j]; return e; }}"]
+        return T, kk
+    if k == 'F4':
+        q = len(fam.q)
+        ctor_map = {}
+        for v, idx in fam.index.items():
+            from .values import ADT
+            if isinstance(v, ADT): ctor_map[v.ctor] = idx
+        step_fn = _gen_step_fn(cert, prefix, env, lines, fns, ctor_map)
+        lines += [f"typedef struct {{ int t[{q}]; }} {T};",
+                  f"static {T} {idf}(void){{ {T} e; for(int i=0;i<{q};i++) e.t[i]=i; return e; }}",
+                  f"static {T} {cof}({T} x, {T} y){{ {T} e; for(int i=0;i<{q};i++) e.t[i]=y.t[x.t[i]]; return e; }}",
+                  f"static void {evf}({T} r, const i64* s, i64* out){{ out[0] = r.t[s[0]]; }}",
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e; for(int i=0;i<{q};i++) e.t[i] = (int){step_fn}(i, in); return e; }}"]
+        return T, 1
+    if k == 'F5':
+        if len(cert.ctrl_scope) != 1: raise CodegenError("C backend: F5 with multiple control components is not supported")
+        q = len(cert.qvalues)
+        ctrl_map = {}
+        from .values import ADT
+        for idx, v in enumerate(cert.qvalues):
+            if isinstance(v, ADT): ctrl_map[v.ctor] = idx
+        env_pay = dict(env); env_pay[cert.ctrl_names[0]] = "aux"
+        PT, pwords = _gen(cert.payload, prefix + "_pay", env_pay, lines, fns, ctor_map=ctrl_map)
+        pidf, pcof, pevf, prhof = f"elem_{prefix}_pay_ident", f"elem_{prefix}_pay_compose", f"elem_{prefix}_pay_ev", f"elem_{prefix}_pay_rho"
+        ctrl_expr = _csym(cert.ctrl_syms[0], env, varmap={cert.ctrl_scope[0]: "q"}, ctor_map=ctrl_map)
+        lines += [f"typedef struct {{ int nxt[{q}]; {PT} pay[{q}]; }} {T};",
+                  f"static {T} {idf}(void){{ {T} e; for(int i=0;i<{q};i++){{ e.nxt[i]=i; e.pay[i]={pidf}(); }} return e; }}",
+                  f"static {T} {cof}({T} x, {T} y){{ {T} e; for(int i=0;i<{q};i++){{ int q1 = x.nxt[i]; e.nxt[i] = y.nxt[q1]; e.pay[i] = {pcof}(x.pay[i], y.pay[q1]); }} return e; }}",
+                  f"static void {evf}({T} r, const i64* s, i64* out){{ int q = (int)s[0]; out[0] = r.nxt[q]; {pevf}(r.pay[q], s+1, out+1); }}",
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e; for(int q=0;q<{q};q++){{ e.nxt[q] = (int)({ctrl_expr}); e.pay[q] = {prhof}(in, q); }} return e; }}"]
+        return T, 1 + pwords
+    if k == 'F6':
+        subs = []
+        for i, sub in enumerate(cert.subs):
+            subs.append(_gen(sub, f"{prefix}_{i}", env, lines, fns, ctor_map=ctor_map))
+        fields = " ".join(f"{t} e{i};" for i, (t, w) in enumerate(subs))
+        idparts = ", ".join(f"elem_{prefix}_{i}_ident()" for i in range(len(subs)))
+        cofparts = "".join(f"e.e{i} = elem_{prefix}_{i}_compose(x.e{i}, y.e{i}); " for i in range(len(subs)))
+        rhoparts = "".join(f"e.e{i} = elem_{prefix}_{i}_rho(in, aux); " for i in range(len(subs)))
+        evparts = ""
+        off = 0
+        for i, (t, w) in enumerate(subs):
+            evparts += f"elem_{prefix}_{i}_ev(r.e{i}, s+{off}, out+{off}); "
+            off += w
+        lines += [f"typedef struct {{ {fields} }} {T};",
+                  f"static {T} {idf}(void){{ {T} e = {{{idparts}}}; return e; }}",
+                  f"static {T} {cof}({T} x, {T} y){{ {T} e; {cofparts}return e; }}",
+                  f"static void {evf}({T} r, const i64* s, i64* out){{ {evparts} }}",
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ {T} e; {rhoparts}return e; }}"]
+        return T, off
+    raise CodegenError(f"C backend does not support family {k}")
+
+def _gen_step_fn(cert, prefix, env, lines, fns, ctor_map):
+    """Generate the original step as C over dense finite-state indices (F4)."""
+    step = cert.step_node
+    if isinstance(step, N.Var):
+        if step.name not in fns: raise CodegenError("F4 C codegen: named step not found")
+        d = fns[step.name]
+        if len(d.params) != 2: raise CodegenError("F4 C codegen: bad step arity")
+        sname, xname = d.params[0][0], d.params[1][0]
+        body = d.body
+        senv = {sname: "s", xname: "in[0]"}
+    elif isinstance(step, N.Lambda):
+        if len(step.params) != 2 or not isinstance(step.params[0], N.PVar):
+            raise CodegenError("F4 C codegen needs a scalar state pattern")
+        in_names = []
+        pattern_names(step.params[1], in_names)
+        senv = {step.params[0].name: "s"}
+        for i, nm in enumerate(in_names): senv[nm] = f"in[{i}]"
+        body = step.body
+    else:
+        raise CodegenError("F4 C codegen: unsupported step form")
+    stmts = []
+    def emit_block(blk):
+        for pat, e in blk.bindings:
+            if not isinstance(pat, N.PVar): raise CodegenError("F4 C codegen: tuple let pattern in step")
+            stmts.append(f"i64 {pat.name} = {_cexpr(e, senv, ctor_map)};")
+            senv[pat.name] = pat.name
+        stmts.append(f"return {_cexpr(blk.expr, senv, ctor_map)};")
+    if isinstance(body, N.Block): emit_block(body)
+    else: stmts.append(f"return {_cexpr(body, senv, ctor_map)};")
+    fn = f"step_{prefix}"
+    lines.append(f"static i64 {fn}(i64 s, const i64* in){{ " + " ".join(stmts) + " }")
+    return fn
+
 def generate_c(prog, analysis, fn_name=None):
     rec = None
     for r in analysis.records:
@@ -74,17 +231,15 @@ def generate_c(prog, analysis, fn_name=None):
             rec = r; break
     if rec is None: raise CodegenError("no certified fold/scan found to generate C for")
     cert = rec["cert"]
-    if cert.kind not in ('F0', 'F1', 'F3', 'F2'):
-        raise CodegenError(f"C backend does not support family {cert.kind} yet")
-    # input fields
+    fns = {d.name: d for d in prog.decls if isinstance(d, N.FnDecl)}
     in_names = []
     if cert.input_pat is not None: pattern_names(cert.input_pat, in_names)
     env = {name: f"in[{i}]" for i, name in enumerate(in_names)}
-    # free coefficient variables (e.g. a clamp capacity captured from the
-    # enclosing function) become leading scalar parameters of the program
     free = []
+    syms = []
+    _collect_coeff_syms(cert, syms)
     def walk_ast(e):
-        if isinstance(e, N.Var) and e.name not in env and e.name not in free and e.name and e.name[0].islower(): free.append(e.name)
+        if isinstance(e, N.Var) and e.name not in env and e.name not in fns and e.name not in free and e.name and e.name[0].islower(): free.append(e.name)
         for v in vars(e).values():
             if isinstance(v, N.Node): walk_ast(v)
             elif isinstance(v, list):
@@ -92,122 +247,83 @@ def generate_c(prog, analysis, fn_name=None):
                     if isinstance(y, N.Node): walk_ast(y)
     def walk_sym(s):
         if s[0] == 'leaf': walk_ast(s[1]); return
+        if s[0] == 'nleaf':
+            if s[1] not in env and s[1] not in free: free.append(s[1])
+            return
         for x in s[1:]:
             if isinstance(x, tuple): walk_sym(x)
             elif isinstance(x, list):
                 for y in x: walk_sym(y)
-    for c in getattr(cert, 'coeffs', []): walk_sym(c)
+    for s in syms: walk_sym(s)
+    # control names of F5 are bound via aux, not free params
+    def ctrl_names(c):
+        out = list(getattr(c, 'ctrl_names', []) or [])
+        if getattr(c, 'payload', None) is not None: out += ctrl_names(c.payload)
+        for sub in getattr(c, 'subs', []) or []: out += ctrl_names(sub)
+        return out
+    bound = set(ctrl_names(cert))
+    free = [f for f in free if f not in bound]
     for i, name in enumerate(free): env[name] = f"param[{i}]"
     nin = max(1, len(in_names))
-    fam = cert.family
     lines = ["#include <stdio.h>", "#include <stdlib.h>", "#include <stdint.h>", "#include <pthread.h>", HELPERS]
     if free: lines.append(f"static i64 param[{len(free)}];")
-    if cert.kind in ('F0', 'F1', 'F3'):
-        coeffs = [_csym(c, env) for c in cert.coeffs]
-        if cert.kind == 'F0':
-            op = fam.op
-            body = {'+': "a + b", '*': "a * b", 'min': "a<b?a:b", 'max': "a>b?a:b",
-                    '&': "a & b", '|': "a | b", '^': "a ^ b", 'and': "a && b", 'or': "a || b"}[op]
-            ident = {'+': "0", '*': "1", 'min': "WREX_PINF", 'max': "WREX_NINF", '&': "-1", '|': "0", '^': "0", 'and': "1", 'or': "0"}[op]
-            lines += ["typedef i64 Elem;", f"static Elem elem_ident(void){{ return {ident}; }}",
-                      f"static Elem elem_compose(Elem a, Elem b){{ return {body}; }}",
-                      "static i64 elem_ev(Elem r, i64 s){ return elem_compose(s, r); }",
-                      f"static Elem elem_rho(const i64* in){{ return {coeffs[0]}; }}"]
-        elif cert.kind == 'F1':
-            lines += ["typedef struct { i64 a, b; } Elem;",
-                      "static Elem elem_ident(void){ Elem e = {1, 0}; return e; }",
-                      "static Elem elem_compose(Elem x, Elem y){ Elem e = {y.a * x.a, y.a * x.b + y.b}; return e; }",
-                      "static i64 elem_ev(Elem r, i64 s){ return r.a * s + r.b; }",
-                      f"static Elem elem_rho(const i64* in){{ Elem e = {{{coeffs[0]}, {coeffs[1]}}}; return e; }}"]
-        else:  # F3
-            lines += ["typedef struct { i64 a, l, h; } Elem;",
-                      "static Elem elem_ident(void){ Elem e = {0, WREX_NINF, WREX_PINF}; return e; }",
-                      "static Elem elem_compose(Elem x, Elem y){ i64 l = wrex_addinf(x.l, y.a); l = l<y.l?y.l:l; l = l>y.h?y.h:l;"
-                      " i64 h = wrex_addinf(x.h, y.a); h = h>y.h?y.h:h; h = h<y.l?y.l:h;"
-                      " Elem e = {wrex_addinf(x.a, y.a), l, h}; return e; }",
-                      "static i64 elem_ev(Elem r, i64 s){ i64 v = wrex_addinf(s, r.a); return v<r.l?r.l:(v>r.h?r.h:v); }",
-                      f"static Elem elem_rho(const i64* in){{ Elem e = {{{coeffs[0]}, {coeffs[1]}, {coeffs[2]}}}; return e; }}"]
-        state_ty = "i64"; nstate = 1
-    else:  # F2
-        k = fam.k; n = k + 1
-        if fam.semiring != 'ring': raise CodegenError("C backend supports F2 over a ring only")
-        coeffs = [_csym(c, env) for c in cert.coeffs]
-        flat = ", ".join(coeffs)
-        lines += [f"#define K {k}", f"#define N {n}", "typedef struct { i64 m[N][N]; } Elem;",
-                  "static Elem elem_ident(void){ Elem e; for(int i=0;i<N;i++) for(int j=0;j<N;j++) e.m[i][j] = (i==j); return e; }",
-                  "static Elem elem_compose(Elem x, Elem y){ Elem e; for(int i=0;i<N;i++) for(int j=0;j<N;j++){ __int128 acc=0; for(int t=0;t<N;t++) acc += (__int128)y.m[i][t]*x.m[t][j]; e.m[i][j]=(i64)acc; } return e; }",
-                  f"static Elem elem_rho(const i64* in){{ i64 flat[{n*n}] = {{{flat}}}; Elem e; for(int i=0;i<N;i++) for(int j=0;j<N;j++) e.m[i][j]=flat[i*N+j]; return e; }}"]
-        state_ty = "vec"; nstate = k
+    # emit scalar user functions referenced by coefficients (e.g. is_alpha)
+    FN_C.clear()
+    called = []
+    def find_calls(e):
+        if isinstance(e, N.Call) and isinstance(e.f, N.Var) and e.f.name in fns and e.f.name not in called: called.append(e.f.name)
+        for v in vars(e).values():
+            if isinstance(v, N.Node): find_calls(v)
+            elif isinstance(v, list):
+                for y in v:
+                    if isinstance(y, N.Node): find_calls(y)
+    def find_calls_sym(s):
+        if s[0] == 'leaf': find_calls(s[1]); return
+        for x in s[1:]:
+            if isinstance(x, tuple): find_calls_sym(x)
+            elif isinstance(x, list):
+                for y in x: find_calls_sym(y)
+    for s in syms: find_calls_sym(s)
+    for name in called:
+        d = fns[name]; FN_C[name] = f"wrex_fn_{name}"
+    for name in called:
+        d = fns[name]
+        params = ", ".join(f"i64 {pn}" for pn, _ in d.params) or "void"
+        fenv = {pn: pn for pn, _ in d.params}
+        body = d.body
+        if not isinstance(body, N.Block) or body.bindings: raise CodegenError(f"C backend: function {name} used in a coefficient must be a single expression")
+        lines.append(f"static i64 wrex_fn_{name}({params}){{ return {_cexpr(body.expr, fenv)}; }}")
+    T, words = _gen(cert, "w", env, lines, fns)
     is_scan = rec["kind"] == 'scan'
-    # state printing / ev for F2 is special-cased in main template below
-    main = []
-    main.append("static Elem* elems; static i64* inputs; static long n;")
-    if cert.kind == 'F2':
-        main.append(r"""
-static void apply_elem(Elem r, const i64* s, i64* out){ for(int i=0;i<K;i++){ __int128 acc=0; for(int j=0;j<K;j++) acc+=(__int128)r.m[i][j]*s[j]; acc += r.m[i][K]; out[i]=(i64)acc; } }
-""")
-    main.append(r"""
-typedef struct { long a, b; Elem acc; } Job;
-static void* summarize(void* p){ Job* j = (Job*)p; Elem e = elem_ident(); for(long i=j->a;i<j->b;i++) e = elem_compose(e, elems[i]); j->acc = e; return 0; }
-int main(int argc, char** argv){
-  long p = argc > 1 ? atol(argv[1]) : 4; if(p < 1) p = 1;""")
+    main = [f"#define NIN {nin}", f"#define WORDS {words}", f"typedef {T} Elem;",
+            "static Elem* elems; static i64* inputs; static long n;",
+            "typedef struct { long a, b; Elem acc; } Job;",
+            "static void* summarize(void* p){ Job* j = (Job*)p; Elem e = elem_w_ident(); for(long i=j->a;i<j->b;i++) e = elem_w_compose(e, elems[i]); j->acc = e; return 0; }",
+            "int main(int argc, char** argv){",
+            "  long p = argc > 1 ? atol(argv[1]) : 4; if(p < 1) p = 1;"]
     if free:
         main.append(f"  for(int i = 0; i < {len(free)}; i++){{ if(scanf(\"%lld\", &param[i]) != 1) return 1; }}")
-    main.append(r"""  if(scanf("%ld", &n) != 1) return 1;
-  inputs = malloc(sizeof(i64) * (n > 0 ? n : 1) * NIN);
-  for(long i = 0; i < n * NIN; i++){ if(scanf("%lld", &inputs[i]) != 1) return 1; }
-  elems = malloc(sizeof(Elem) * (n > 0 ? n : 1));
-  for(long i = 0; i < n; i++) elems[i] = elem_rho(inputs + i * NIN);
-""")
-    main.append(f"#define NIN {nin}\n" if False else "")
-    # NOTE: NIN used above must be defined before main; handled by pre-define injection
+    main += ["  if(scanf(\"%ld\", &n) != 1) return 1;",
+             "  inputs = malloc(sizeof(i64) * (n > 0 ? n : 1) * NIN);",
+             "  for(long i = 0; i < n * NIN; i++){ if(scanf(\"%lld\", &inputs[i]) != 1) return 1; }",
+             "  elems = malloc(sizeof(Elem) * (n > 0 ? n : 1));",
+             "  for(long i = 0; i < n; i++) elems[i] = elem_w_rho(inputs + i * NIN, 0);",
+             "  i64 s0[WORDS]; for(int i = 0; i < WORDS; i++){ if(scanf(\"%lld\", &s0[i]) != 1) return 1; }"]
     if not is_scan:
-        if cert.kind == 'F2':
-            main.append(r"""
-  long blocks = p < n ? p : (n > 0 ? n : 1);
-  Elem total = elem_ident();
-  if(n > 0){
-    pthread_t* th = malloc(sizeof(pthread_t) * blocks); Job* jobs = malloc(sizeof(Job) * blocks);
-    for(long b = 0; b < blocks; b++){ jobs[b].a = b * n / blocks; jobs[b].b = (b + 1) * n / blocks; pthread_create(&th[b], 0, summarize, &jobs[b]); }
-    for(long b = 0; b < blocks; b++){ pthread_join(th[b], 0); total = elem_compose(total, jobs[b].acc); }
-    free(th); free(jobs);
-  }
-  i64 s0[K]; for(int i = 0; i < K; i++){ if(scanf("%lld", &s0[i]) != 1) return 1; }
-  i64 out[K]; apply_elem(total, s0, out);
-  for(int i = 0; i < K; i++) printf("%s%lld", i ? " " : "", out[i]);
-  printf("\n"); return 0; }
-""")
-        else:
-            main.append(r"""
-  long blocks = p < n ? p : (n > 0 ? n : 1);
-  Elem total = elem_ident();
-  if(n > 0){
-    pthread_t* th = malloc(sizeof(pthread_t) * blocks); Job* jobs = malloc(sizeof(Job) * blocks);
-    for(long b = 0; b < blocks; b++){ jobs[b].a = b * n / blocks; jobs[b].b = (b + 1) * n / blocks; pthread_create(&th[b], 0, summarize, &jobs[b]); }
-    for(long b = 0; b < blocks; b++){ pthread_join(th[b], 0); total = elem_compose(total, jobs[b].acc); }
-    free(th); free(jobs);
-  }
-  i64 s0; if(scanf("%lld", &s0) != 1) return 1;
-  printf("%lld\n", elem_ev(total, s0)); return 0; }
-""")
+        main += ["  Elem total = elem_w_ident();",
+                 "  if(n > 0){ long blocks = p < n ? p : n;",
+                 "    pthread_t* th = malloc(sizeof(pthread_t) * blocks); Job* jobs = malloc(sizeof(Job) * blocks);",
+                 "    for(long b = 0; b < blocks; b++){ jobs[b].a = b * n / blocks; jobs[b].b = (b + 1) * n / blocks; pthread_create(&th[b], 0, summarize, &jobs[b]); }",
+                 "    for(long b = 0; b < blocks; b++){ pthread_join(th[b], 0); total = elem_w_compose(total, jobs[b].acc); }",
+                 "    free(th); free(jobs); }",
+                 "  i64 out[WORDS]; elem_w_ev(total, s0, out);",
+                 "  for(int i = 0; i < WORDS; i++) printf(\"%s%lld\", i ? \" \" : \"\", out[i]);",
+                 "  printf(\"\\n\"); return 0; }"]
     else:
-        if cert.kind == 'F2': raise CodegenError("C backend: F2 scan not supported (fold is)")
-        main.append(r"""
-  long blocks = p < n ? p : (n > 0 ? n : 1);
-  Elem* starts = malloc(sizeof(Elem) * blocks);
-  if(n > 0){
-    pthread_t* th = malloc(sizeof(pthread_t) * blocks); Job* jobs = malloc(sizeof(Job) * blocks);
-    for(long b = 0; b < blocks; b++){ jobs[b].a = b * n / blocks; jobs[b].b = (b + 1) * n / blocks; pthread_create(&th[b], 0, summarize, &jobs[b]); }
-    Elem prefix = elem_ident();
-    for(long b = 0; b < blocks; b++){ pthread_join(th[b], 0); starts[b] = prefix; prefix = elem_compose(prefix, jobs[b].acc); }
-    free(th); free(jobs);
-  }
-  i64 s0; if(scanf("%lld", &s0) != 1) return 1;
-  (void)starts;
-  i64 s = s0;
-  for(long i = 0; i < n; i++){ s = elem_ev(elems[i], s); printf("%s%lld", i ? " " : "", s); }
-  printf("\n"); return 0; }
-""")
-    src = f"/* generated by wrex codegen: {rec['kind']} in fn {rec['fn']} ({cert.describe()}) */\n"
-    src += "\n".join(lines) + f"\n#define NIN {nin}\n" + "\n".join(main)
-    return src
+        main += ["  /* phase 3 replay: ev(rho(x), s) is the step itself (law L3) */",
+                 "  i64 s[WORDS]; for(int i = 0; i < WORDS; i++) s[i] = s0[i];",
+                 "  for(long i = 0; i < n; i++){ i64 out[WORDS]; elem_w_ev(elems[i], s, out); for(int j = 0; j < WORDS; j++) s[j] = out[j];",
+                 "    for(int j = 0; j < WORDS; j++) printf(\"%s%lld\", (i || j) ? \" \" : \"\", out[j]); }",
+                 "  printf(\"\\n\"); return 0; }"]
+    src = f"/* generated by wrex codegen: {rec['kind']} in fn {rec['fn']} ({cert.describe()}); state words = {words} */\n"
+    return src + "\n".join(lines) + "\n" + "\n".join(main) + "\n"

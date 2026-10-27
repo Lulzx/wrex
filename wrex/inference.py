@@ -163,6 +163,25 @@ class SymBuilder:
         if isinstance(e,N.BinOp): return ('bin',e.op,self.build(e.l,local),self.build(e.r,local),e.ty)
         if isinstance(e,N.Unary): return ('un',e.op,self.build(e.e,local),e.ty)
         if isinstance(e,N.If): return ('if',self.build(e.cond,local),self.build(e.then,local),self.build(e.els,local))
+        if isinstance(e,N.Match):
+            scrut=self.build(e.scrut,local)
+            if sym_vars(scrut): return ('unsupported',e)
+            result=None
+            for pat,blk in reversed(e.arms):
+                local2=dict(local)
+                if isinstance(pat,N.PWild):
+                    cond=None
+                elif isinstance(pat,N.PVar):
+                    local2[pat.name]=scrut; cond=None
+                elif isinstance(pat,N.PLit):
+                    cond=('bin','==',scrut,('leaf',N.Lit(value=pat.value,line=e.line)),None)
+                elif isinstance(pat,N.PCtor) and not pat.items:
+                    cond=('bin','==',scrut,('leaf',N.CtorExpr(name=pat.name,args=[],line=e.line)),None)
+                else:
+                    return ('unsupported',e)
+                arm=self.build_block(blk,local2)
+                result=arm if cond is None else ('if',cond,arm,result if result is not None else arm)
+            return result if result is not None else ('unsupported',e)
         if isinstance(e,N.Call) and isinstance(e.f,N.Var) and e.f.name in ('min','max','clamp'):
             return ('call',e.f.name,[self.build(a,local) for a in e.args],e.ty)
         if isinstance(e,N.TupleExpr): return ('tuple',[self.build(x,local) for x in e.items])

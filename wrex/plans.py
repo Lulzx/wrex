@@ -42,8 +42,14 @@ def fold(interp,node,xs,s0,step):
     if cfg.device not in (None,'cpu'):
         from . import gpu
         if gpu.available():
-            r=gpu.gpu_fold(interp,node,xs,s0,step,cert)
-            if r is not gpu.UNAVAILABLE: return r
+            use=True
+            if cfg.plan=='auto' and cert is not None:
+                # GPU cost guard (spec 10.2/13.5.5): only offload when the device wins
+                cal=costmod.load_cal()
+                use=costmod.gpu_fold_cost(len(xs),cert,cal) < len(xs)*costmod.op_count(getattr(cert,'step_node',None))
+            if use:
+                r=gpu.gpu_fold(interp,node,xs,s0,step,cert)
+                if r is not gpu.UNAVAILABLE: return r
     if cfg.plan=='seq' or cert is None: return _seq_fold(interp,xs,s0,step)
     if cfg.plan=='auto':
         costs=costmod.fold_costs(len(xs),cfg.workers,cert,costmod.op_count(getattr(cert,'step_node',None)))
@@ -68,8 +74,13 @@ def scan(interp,node,xs,s0,step):
     if cfg.device not in (None,'cpu'):
         from . import gpu
         if gpu.available():
-            r=gpu.gpu_scan(interp,node,xs,s0,step,cert)
-            if r is not gpu.UNAVAILABLE: return r
+            use=True
+            if cfg.plan=='auto' and cert is not None:
+                cal=costmod.load_cal()
+                use=costmod.gpu_scan_cost(len(xs),cert,cal) < len(xs)*costmod.op_count(getattr(cert,'step_node',None))
+            if use:
+                r=gpu.gpu_scan(interp,node,xs,s0,step,cert)
+                if r is not gpu.UNAVAILABLE: return r
     if cfg.plan=='seq' or cert is None: return _seq_scan(interp,xs,s0,step)
     if cfg.plan=='auto':
         costs=costmod.scan_costs(len(xs),cfg.workers,cert,costmod.op_count(getattr(cert,'step_node',None)))
@@ -131,6 +142,11 @@ def treefold(interp,node,env):
         if min(costs,key=costs.get)!='Contract':
             return interp.treefold_seq(tree,node.arms,env)
     try:
+        if cfg.device not in (None,'cpu'):
+            from . import gpu
+            if gpu.available():
+                r=gpu.gpu_contract(interp,node,tree,ctx,env)
+                if r is not gpu.UNAVAILABLE: return r
         return _contract(interp,node,tree,ctx,env)
     except Trap:
         return interp.treefold_seq(tree,node.arms,env)  # re-runs to exact first trap (spec 9.4)
