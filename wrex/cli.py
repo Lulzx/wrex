@@ -60,6 +60,30 @@ def main(argv=None):
               "       wrex check file.wrx\n       wrex explain file.wrx\n       wrex test file.wrx\n       wrex calibrate")
         return 0
     cmd=argv[0]
+    if cmd=='bench':
+        from .bench import main as bench_main
+        return bench_main(argv[1:])
+    if cmd=='codegen':
+        fn=None; out=None; rest=[]
+        i=1
+        while i < len(argv):
+            a=argv[i]
+            if a.startswith('--fn='): fn=a.split('=',1)[1]
+            elif a in ('-o','--out'): i+=1; out=argv[i]
+            else: rest.append(a)
+            i+=1
+        if not rest: print("wrex codegen: missing file",file=sys.stderr); return 2
+        try:
+            src,(prog,checker,analysis)=_load(rest[0])
+            from .codegen import generate_c, CodegenError
+            csrc=generate_c(prog,analysis,fn)
+        except Exception as ex:
+            print(f"error: {ex}",file=sys.stderr); return 1
+        if out:
+            with open(out,'w') as f: f.write(csrc)
+            print(out)
+        else: print(csrc)
+        return 0
     try:
         if cmd=='calibrate':
             cal=costmod.calibrate(); print(f"calibrated: {cal}"); return 0

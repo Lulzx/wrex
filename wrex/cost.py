@@ -26,7 +26,7 @@ def fold_costs(n,p,cert,c_step,cal=None):
     cal=cal or load_cal()
     c_rho=c_step
     if cert is not None and cert.kind in ('F4','F5'): c_rho=c_step*max(1,cert.family.dim)
-    c_comp=cert.cost if cert else 0; c_ev=c_comp
+    c_comp=comp_cost(cert,cal); c_ev=c_comp
     t_seq=n*c_step
     if cert is None or p<=1: return {"Seq":t_seq}
     t_par=(n/p)*(c_rho+c_comp)+math.log2(max(p,2))*(c_comp+cal["c_sync"])+c_ev
@@ -36,7 +36,7 @@ def scan_costs(n,p,cert,c_step,cal=None):
     cal=cal or load_cal()
     c_rho=c_step
     if cert is not None and cert.kind in ('F4','F5'): c_rho=c_step*max(1,cert.family.dim)
-    c_comp=cert.cost if cert else 0
+    c_comp=comp_cost(cert,cal)
     t_seq=n*c_step
     if cert is None or p<=1: return {"Seq":t_seq}
     t_par=(n/p)*(c_rho+c_comp+c_step)+p*c_comp+2*cal["c_sync"]
@@ -57,12 +57,40 @@ def gpu_scan_cost(n,cert,cal=None,P_dev=1024,B=0):
     cal=cal or load_cal()
     return B/cal["beta"]+2*math.ceil(math.log2(max(n,2)))*cal["c_launch"]+(2*n/P_dev)*(1+cert.cost+cert.cost)
 
+def comp_cost(cert,cal=None):
+    """Cost of one compose: calibrated per-family ratio if available, else the spec cost."""
+    cal=cal or load_cal()
+    table=cal.get("compose_cost") or {}
+    if cert is not None and cert.kind in table: return float(table[cert.kind])
+    return cert.cost if cert else 0
+
 def calibrate():
     cal=load_cal()
-    # measure a simple op loop to scale c_op / c_sync relative constants
     t0=time.perf_counter(); s=0
     for i in range(200000): s+=i*i
     dt=time.perf_counter()-t0
     cal["c_op"]=max(0.1,dt/200000*1e6)  # relative units
+    # per-family compose costs, measured relative to F0 (spec 10.2 calibration)
+    try:
+        from . import families as F
+        import random as _r
+        rnd=_r.Random(0)
+        specimens={
+            "F0": (F.F0('+','int'), lambda: rnd.randint(-99,99)),
+            "F1": (F.F1('int'), lambda: (rnd.randint(-3,3), rnd.randint(-99,99))),
+            "F3": (F.F3(), lambda: (rnd.randint(-5,5), rnd.randint(-50,0), rnd.randint(0,50))),
+            "F2": (F.F2(2,'ring','int'), lambda: [[rnd.randint(-3,3)]*3 for _ in range(3)]),
+            "F4": (F.F4(list(range(8))), lambda: tuple(rnd.randrange(8) for _ in range(8))),
+        }
+        times={}
+        for name,(fam,gen) in specimens.items():
+            elems=[gen() for _ in range(64)]
+            t0=time.perf_counter()
+            for i in range(2000): fam.compose(elems[i%64], elems[(i+1)%64])
+            times[name]=max(time.perf_counter()-t0, 1e-9)
+        base=times["F0"]
+        cal["compose_cost"]={k: round(max(1.0, v/base), 2) for k,v in times.items()}
+    except Exception:
+        pass
     with open(CAL_PATH,'w') as f: json.dump(cal,f,indent=1)
     return cal

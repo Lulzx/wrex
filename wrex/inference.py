@@ -406,7 +406,7 @@ def infer_numeric_group(syms,scope,tys,names,trap_reason):
         i=scope[0]; s=syms[0]; ty=tys[0]
         # F0
         fam=None; g=None
-        if s[0]=='bin' and s[1] in ('+','*','&','|','^'):
+        if s[0]=='bin' and s[1] in ('+','*','&','|','^','and','or'):
             if s[2]==('var',i) and not sym_vars(s[3]): fam,g=s[1],s[3]
             elif s[3]==('var',i) and not sym_vars(s[2]): fam,g=s[1],s[2]
         if s[0]=='call' and s[1] in ('min','max'):

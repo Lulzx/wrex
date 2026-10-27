@@ -56,10 +56,11 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 
 ## Status and honest limitations
 
-This is version 0.1, and it behaves like one:
+Version 0.2 adds the two backends 0.1 was missing, and keeps the same rule: a plan that can't be made exact doesn't ship.
 
-- Plans execute on a Python runtime implementing the algorithms above directly. There is no C codegen backend yet; the point of this release is that the *semantics and the inference* are right, which is the part that's hard to retrofit.
-- The tinygrad backend lowers certified F0/F1 folds to tensor reductions when a device is requested (`pip install -e '.[gpu]'`). Scans and the remaining families intentionally fall back to the exact CPU plans rather than to a second, less-tested implementation of the same math.
-- Trees contract on the CPU; GPU tree contraction is an open problem I have opinions about but no results on. See the open questions in [spec.md](spec.md) — representation-size-vs-benefit thresholds and user-defined families with machine-checked laws are the two I'd most like to see attacked.
+- **C backend.** `wrex codegen file.wrx -o out.c` emits standalone C (pthreads, three-phase blocked scan / balanced fold) for certified F0, F1, F3 and ring-F2 folds and scans, including captured scalar parameters. Compile it with any C compiler; it reads `n`, the inputs, and the initial state on stdin. Generated code is tested byte-for-byte against the interpreter. F4–F6 codegen does not exist yet.
+- **GPU backend.** With tinygrad installed (`pip install -e '.[gpu]'`), folds and scans for *all* families F0–F6 lower to tensor operations — batched matrix products for F2, gathers for F4/F5 control, componentwise composition for F6 — with operand order preserved, because ⋄ is not commutative and pretending otherwise is how you get wrong answers quickly. Any failure falls back to the exact CPU plan.
+- **Benchmarks.** `wrex bench` runs the Appendix B suite (prefix sum, linear recurrence, saturating counters, tokenizer, Viterbi-style tropical fold, balanced and list-shaped expression trees) under every plan and reports whether they agree — they must — alongside timings. At small `n` the parallel and GPU plans lose to sequential, exactly as the cost model predicts; that crossover behavior is the point of having one.
+- Trees still contract on the CPU; GPU tree contraction is an open problem I have opinions about but no results on. See the open questions in [spec.md](spec.md) — representation-size-vs-benefit thresholds and user-defined families with machine-checked laws are the two I'd most like to see attacked.
 
 The full design — laws, proofs sketches, trap semantics, cost formulas, and the phase plan — is in [spec.md](spec.md). Tests (`python3 -m unittest discover -s tests`) include randomized checks that each family's laws actually hold, and differential tests that every plan agrees with the reference interpreter. Those tests exist because of the obvious meta-point: a language whose entire pitch is "trust me, same answer" should be required to demonstrate it, mechanically, on every change.

@@ -1,0 +1,6 @@
+# F1 affine scan (spec 14.1)
+fn balances(txs: [(i64, i64)]) -> [i64]:
+    scan(txs, 0, (b, (rate, deposit)) => b * rate + deposit)
+
+fn main(args: [Str]) -> Out:
+    print(balances([(1, 10), (1, 20), (2, 5)]))

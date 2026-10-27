@@ -1,0 +1,6 @@
+# Appendix B: Viterbi-style tropical fold (max-plus F2)
+fn viterbi(xs: [int]) -> (int, int):
+    fold(xs, (0, 0), ((a, b), x) => (max(a + x, b + (0 - x)), max(a + (0 - x), b + x)))
+
+fn main(args: [Str]) -> Out:
+    print(viterbi([3, -1, 2]))

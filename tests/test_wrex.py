@@ -114,6 +114,52 @@ class TestConformance(unittest.TestCase):
             ok, outs = differential(src)
             self.assertTrue(ok, f"{name}: {outs}")
 
+class TestCodegen(unittest.TestCase):
+    def _run_c(self, src, fn, stdin):
+        import subprocess, os, tempfile
+        prog, ck, an = compile_source(src)
+        from wrex.codegen import generate_c
+        csrc = generate_c(prog, an, fn)
+        with tempfile.TemporaryDirectory() as d:
+            cpath, binpath = os.path.join(d, "out.c"), os.path.join(d, "out")
+            open(cpath, "w").write(csrc)
+            r = subprocess.run(["cc", "-O2", "-o", binpath, cpath], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            r = subprocess.run([binpath, "4"], input=stdin, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return r.stdout.strip()
+    def test_c_f1_scan(self):
+        src = ("fn balances(txs: [(i64, i64)]) -> [i64]:\n    scan(txs, 0, (b, (rate, deposit)) => b * rate + deposit)\n"
+               "fn main(args: [Str]) -> Out:\n    print(balances([(1, 10)]))\n")
+        self.assertEqual(self._run_c(src, "balances", "3 1 10 1 20 2 5 0"), "10 30 65")
+    def test_c_f3_scan_with_free_var(self):
+        src = ("fn stock(deltas: [int], capacity: int) -> [int]:\n    scan(deltas, 0, (s, d) => clamp(s + d, 0, capacity))\n"
+               "fn main(args: [Str]) -> Out:\n    print(stock([5], 8))\n")
+        self.assertEqual(self._run_c(src, "stock", "8 5 5 -2 10 -20 3 0"), "5 3 8 0 3")
+    def test_c_f2_fold(self):
+        src = ("fn fib(steps: [u64]) -> (u64, u64):\n    fold(steps, (0, 1), ((a, b), k) => (b, a + k * b))\n"
+               "fn main(args: [Str]) -> Out:\n    print(fib([1]))\n")
+        self.assertEqual(self._run_c(src, "fib", "6 1 1 1 1 1 1 0 1"), "8 13")
+    def test_c_unsupported_family_reports(self):
+        from wrex.codegen import generate_c, CodegenError
+        prog, ck, an = compile_source(open("examples/word_count.wrx").read())
+        with self.assertRaises(CodegenError):
+            generate_c(prog, an, "word_count")
+
+class TestBench(unittest.TestCase):
+    def test_bench_all_plans_agree(self):
+        from wrex.bench import run_bench
+        rows = run_bench(n=60)
+        self.assertEqual(len(rows), 7)
+        self.assertTrue(all(r[4] for r in rows), rows)
+    def test_f0_bool(self):
+        src = ("fn f(xs: [bool]) -> bool:\n    fold(xs, true, (s, x) => s and x)\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([true, true, false]))\n")
+        prog, ck, an = compile_source(src)
+        self.assertEqual(an.records[0]["cert"].kind, "F0")
+        for plan in ("seq", "par"):
+            self.assertEqual(run(src, plan), "false")
+
 class TestGPU(unittest.TestCase):
     def test_gpu_fold_matches_cpu(self):
         from wrex import gpu
@@ -124,6 +170,19 @@ class TestGPU(unittest.TestCase):
         prog, ck, an = compile_source(src)
         interp = make_interpreter(prog, an, Config(plan="par", workers=8, device="metal"))
         self.assertEqual(fmt(run_main(interp, [])), "28")
+    def test_gpu_scan_and_families_match_cpu(self):
+        from wrex import gpu
+        if not gpu.available():
+            self.skipTest("tinygrad not installed")
+        cases = [
+            ("fn f(xs: [(i64,i64)]) -> [i64]:\n    scan(xs, 0, (b, (r, d)) => b * r + d)\nfn main(args: [Str]) -> Out:\n    print(f([(1,10),(1,20),(2,5)]))\n", "[10, 30, 65]"),
+            (open("examples/word_count.wrx").read(), "2"),
+            ("fn f(xs: [int]) -> (int, int):\n    fold(xs, (0, 1), ((a, b), x) => (a + x, b * 2))\nfn main(args: [Str]) -> Out:\n    print(f([1,2,3]))\n", "(6, 8)"),
+        ]
+        for src, want in cases:
+            prog, ck, an = compile_source(src)
+            interp = make_interpreter(prog, an, Config(plan="par", workers=8, device="metal"))
+            self.assertEqual(fmt(run_main(interp, [])), want)
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,6 @@
+# Appendix B: prefix sum (F0)
+fn prefix_sum(xs: [i64]) -> [i64]:
+    scan(xs, 0, (s, x) => s + x)
+
+fn main(args: [Str]) -> Out:
+    print(prefix_sum([1, 2, 3, 4]))

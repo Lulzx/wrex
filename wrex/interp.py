@@ -13,6 +13,8 @@ class Config:
 
 class Interpreter:
     def __init__(self,prog,config=None,checker=None):
+        import sys as _sys
+        if _sys.getrecursionlimit() < 100000: _sys.setrecursionlimit(100000)
         self.prog=prog; self.config=config or Config()
         self.fns={}; self.ctors={}; self.types={}
         for d in prog.decls:
