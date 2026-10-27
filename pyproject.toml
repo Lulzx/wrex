@@ -1,0 +1,14 @@
+[build-system]
+requires=["setuptools>=61"]
+build-backend="setuptools.build_meta"
+[project]
+name="wrex"
+version="0.1.0"
+description="Wrex: exact implicit parallelism via representation inference"
+requires-python=">=3.10"
+[project.scripts]
+wrex="wrex.cli:main"
+[project.optional-dependencies]
+gpu=["tinygrad"]
+[tool.setuptools.packages.find]
+include=["wrex*"]

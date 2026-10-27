@@ -1,0 +1,12 @@
+# Tree fold with F1 contexts (spec 9.1)
+type Expr = Num(i64) | Add(Expr, Expr) | Mul(Expr, Expr) | Neg(Expr)
+
+fn eval(e: Expr) -> i64:
+    treefold e:
+        Num(n) => n
+        Add(a, b) => a + b
+        Mul(a, b) => a * b
+        Neg(a) => 0 - a
+
+fn main(args: [Str]) -> Out:
+    print(eval(Mul(Add(Num(2), Num(3)), Neg(Num(4)))))

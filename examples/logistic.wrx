@@ -1,0 +1,6 @@
+# Not representable: degree 2 in the state (spec 14.6)
+fn logistic(rs: [int]) -> int:
+    fold(rs, 1, (s, r) => r * s * (100 - s))
+
+fn main(args: [Str]) -> Out:
+    print(logistic([2, 3]))

@@ -1,0 +1,6 @@
+# F2 linear recurrence (spec 14.4)
+fn fib_mod(steps: [u64]) -> (u64, u64):
+    fold(steps, (0, 1), ((a, b), k) => (b, a + k * b))
+
+fn main(args: [Str]) -> Out:
+    print(fib_mod([1, 1, 1, 1, 1, 1]))

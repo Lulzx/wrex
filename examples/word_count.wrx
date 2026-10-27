@@ -1,0 +1,17 @@
+# F5 over F0 word count (spec 14.3)
+type Mode = InWord | Gap
+
+fn is_alpha(c: u8) -> bool:
+    (c >= 65 and c <= 90) or (c >= 97 and c <= 122)
+
+@par
+fn word_count(text: [u8]) -> int:
+    let (_, n) = fold(text, (Gap, 0), ((m, n), c) =>
+        if is_alpha(c) then
+            (InWord, if m == Gap then n + 1 else n)
+        else
+            (Gap, n))
+    n
+
+fn main(args: [Str]) -> Out:
+    print(word_count([104, 105, 32, 116, 104, 101, 114, 101]))

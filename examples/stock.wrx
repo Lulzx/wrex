@@ -1,0 +1,6 @@
+# F3 shifted-clamp scan (spec 14.2)
+fn stock_levels(deltas: [int], capacity: int) -> [int]:
+    scan(deltas, 0, (s, d) => clamp(s + d, 0, capacity))
+
+fn main(args: [Str]) -> Out:
+    print(stock_levels([5, -2, 10, -20, 3], 8))
