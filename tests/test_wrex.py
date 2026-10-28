@@ -149,6 +149,30 @@ class TestConformance(unittest.TestCase):
         for plan in ("seq", "par", "auto"):
             self.assertEqual(run(src, plan), "20")
 
+    def test_map_and_product_scan_fusion(self):
+        src = ("fn f(xs: [int]) -> (int, [int], [int]):\n"
+               "    let a = scan(xs, 0, (s, x) => s + x)\n"
+               "    let b = scan(xs, 1, (s, x) => s * x)\n"
+               "    (fold(map(xs, (x) => x * 2), 0, (s, x) => s + x), a, b)\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([1, 2, 3]))\n")
+        for plan in ("seq", "par", "auto"):
+            self.assertEqual(run(src, plan), "(12, [1, 3, 6], [1, 2, 6])")
+    def test_product_scan_fusion_trap_order(self):
+        # reference order: the first scan traps (index) before the second is evaluated,
+        # even though the second would trap at an earlier element (division)
+        src = ("fn f(xs: [int]) -> ([int], [int]):\n"
+               "    let a = scan(xs, 0, (s, x) => s + [10][x])\n"
+               "    let b = scan(xs, 0, (s, x) => s + 100 / x)\n"
+               "    (a, b)\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([0, 1]))\n")
+        with self.assertRaises(Trap) as cm:
+            run(src, "par")
+        self.assertEqual(cm.exception.kind, "index_out_of_bounds")
+    def test_bounded_exhaustive_laws(self):
+        from wrex.conformance import exhaustive_bounded_laws
+        for name, errs in exhaustive_bounded_laws().items():
+            self.assertEqual(errs, [], name)
+
 class TestCodegen(unittest.TestCase):
     def _run_c(self, src, fn, stdin):
         import subprocess, os, tempfile

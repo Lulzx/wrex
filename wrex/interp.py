@@ -55,6 +55,7 @@ class Interpreter:
     def call_value(self,f,args,line=None):
         if isinstance(f,Closure): return f(*args)
         if isinstance(f,str) and f in self.fns: return self.call_fn(f,args)
+        if callable(f): return f(*args)
         raise Trap("call","not callable",line)
     def call_fn(self,name,args):
         d=self.fns[name]
@@ -68,9 +69,34 @@ class Interpreter:
     # ---------- eval
     def eval_block(self,blk,env):
         env=dict(env)
-        for pat,e in blk.bindings:
-            v=self.eval_expr(e,env); env.update(self.bind_pattern(pat,v))
+        binds=blk.bindings; i=0
+        while i < len(binds):
+            pat,e=binds[i]
+            # product scan fusion (spec 8.3): consecutive scans over the same input
+            if (i+1 < len(binds) and isinstance(e,N.Call) and isinstance(e.f,N.Var) and e.f.name=='scan'
+                    and isinstance(binds[i+1][1],N.Call) and isinstance(binds[i+1][1].f,N.Var) and binds[i+1][1].f.name=='scan'):
+                from .fusion import structural_key, fused_scans
+                e2=binds[i+1][1]
+                if structural_key(e.args[0])==structural_key(e2.args[0]):
+                    xs=self._fold_input(e.args[0],env)
+                    s1=self.eval_expr(e.args[1],env); st1=self.eval_expr(e.args[2],env)
+                    s2=self.eval_expr(e2.args[1],env); st2=self.eval_expr(e2.args[2],env)
+                    out1,out2=fused_scans(self,e,e2,xs,s1,st1,s2,st2)
+                    env.update(self.bind_pattern(pat,out1)); env.update(self.bind_pattern(binds[i+1][0],out2))
+                    i+=2; continue
+            v=self.eval_expr(e,env); env.update(self.bind_pattern(pat,v)); i+=1
         return self.eval_expr(blk.expr,env)
+    def _fold_input(self,e,env):
+        """Evaluate a fold/scan input, fusing a feeding map (spec 8.3):
+        the mapped array is never materialized; the map function's traps
+        are checked in order first, matching reference evaluation order."""
+        if isinstance(e,N.Call) and isinstance(e.f,N.Var) and e.f.name=='map' and len(e.args)==2:
+            from .fusion import LazyMap
+            base=self._fold_input(e.args[0],env); f=self.eval_expr(e.args[1],env)
+            lazy=LazyMap(base,f,self)
+            for x in lazy: pass  # trap-order pre-pass; values recomputed lazily later (pure)
+            return lazy
+        return self.eval_expr(e,env)
     def eval_expr(self,e,env):
         if isinstance(e,N.Lit): return wrap(e.value,e.ty) if is_machine(e.ty) else e.value
         if isinstance(e,N.Var):
@@ -188,10 +214,10 @@ class Interpreter:
             ty={'read_i64s':'i64','read_ints':'int','read_u8s':'u8'}[name]
             return [wrap(int(x),ty) for x in data]
         if name=='fold':
-            xs=self.eval_expr(args[0],env); s0=self.eval_expr(args[1],env); step=self.eval_expr(args[2],env)
+            xs=self._fold_input(args[0],env); s0=self.eval_expr(args[1],env); step=self.eval_expr(args[2],env)
             return self.do_fold(e,xs,s0,step)
         if name=='scan':
-            xs=self.eval_expr(args[0],env); s0=self.eval_expr(args[1],env); step=self.eval_expr(args[2],env)
+            xs=self._fold_input(args[0],env); s0=self.eval_expr(args[1],env); step=self.eval_expr(args[2],env)
             return self.do_scan(e,xs,s0,step)
         raise Trap("builtin",name,e.line)
     # fold/scan/treefold dispatch (plans.py overrides via do_* )

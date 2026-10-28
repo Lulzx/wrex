@@ -72,6 +72,55 @@ def exhaustive_finite_laws():
     results['F5 exhaustive (36 elements)'] = errs
     return results
 
+def exhaustive_bounded_laws():
+    """Exhaustive law checks over bounded domains for F0-F3, including
+    infinity boundaries for F3 and tropical-style min/max for F0."""
+    import itertools
+    results = {}
+    D = [-2, -1, 0, 1, 2]
+    # F0 over each operator: elements and states from the domain
+    for op, dom in [('+', D), ('*', D), ('min', D), ('max', D), ('&', [0, 1, 2, 3]), ('|', [0, 1, 2, 3]), ('^', [0, 1, 2, 3])]:
+        fam = F.F0(op, 'int'); errs = []
+        for a in dom:
+            if fam.ev(fam.identity(), a) != a: errs.append("L1"); break
+            for b in dom:
+                for c in dom:
+                    if fam.compose(fam.compose(a, b), c) != fam.compose(a, fam.compose(b, c)): errs.append("assoc"); break
+                for s in dom:
+                    if fam.ev(fam.compose(a, b), s) != fam.ev(b, fam.ev(a, s)): errs.append("L2"); break
+        results[f'F0 {op} bounded'] = errs
+    for op in ('and', 'or'):
+        fam = F.F0(op, 'bool'); errs = []
+        for a in (False, True):
+            for b in (False, True):
+                for c in (False, True):
+                    if fam.compose(fam.compose(a, b), c) != fam.compose(a, fam.compose(b, c)): errs.append("assoc")
+                for s in (False, True):
+                    if fam.ev(fam.compose(a, b), s) != fam.ev(b, fam.ev(a, s)): errs.append("L2")
+        results[f'F0 {op} bounded'] = errs
+    # F1: a in {-1,0,1,2}, b in {-2..2} (20 elements, all triples)
+    fam = F.F1('int'); elems = [(a, b) for a in (-1, 0, 1, 2) for b in D]; errs = []
+    for a in elems:
+        if fam.ev(fam.identity(), 0) != 0: errs.append("L1"); break
+        for b in elems:
+            for c in elems:
+                if fam.compose(fam.compose(a, b), c) != fam.compose(a, fam.compose(b, c)): errs.append("assoc"); break
+            for s in (-3, 0, 3):
+                if fam.ev(fam.compose(a, b), s) != fam.ev(b, fam.ev(a, s)): errs.append("L2"); break
+    results['F1 bounded (20 elements)'] = errs
+    # F3: a in {-1,0,1}, intervals over {-inf,-2,0,2,+inf} (45 elements, all triples)
+    bounds = [F.NINF, -2, 0, 2, F.INF]
+    intervals = [(l, h) for l in bounds for h in bounds if l <= h]
+    elems3 = [(a, l, h) for a in (-1, 0, 1) for (l, h) in intervals]; fam3 = F.F3(); errs = []
+    for a in elems3:
+        for b in elems3:
+            for c in elems3:
+                if fam3.compose(fam3.compose(a, b), c) != fam3.compose(a, fam3.compose(b, c)): errs.append("assoc"); break
+            for s in (-3, 0, 3):
+                if fam3.ev(fam3.compose(a, b), s) != fam3.ev(b, fam3.ev(a, s)): errs.append("L2"); break
+    results['F3 bounded+inf (45 elements)'] = errs
+    return results
+
 def run_with_plan(src,plan,workers=8,argv=None):
     from .compiler import compile_source, make_interpreter
     from .interp import Config, run_main

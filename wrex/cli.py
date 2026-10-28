@@ -34,6 +34,7 @@ def cmd_explain(path,workers=8):
             if "cert" in rec:
                 c=rec["cert"]
                 print(f"  family      {c.describe()}   (dimension {c.dim}, ⋄ cost {c.cost})")
+                print(f"  {c.describe_rho()}")
                 print(f"  L3          {c.l3}")
                 if getattr(c,'reassoc',False): print("  warning     @reassoc: floating-point plans reassociate and are outside the plan-independence guarantee (spec 11)")
                 th=_threshold(rec,workers)
@@ -116,9 +117,12 @@ def main(argv=None):
                 for name,errs in laws.items():
                     print(f"family laws {name}: {'ok' if not errs else 'FAIL '+str(errs)}")
                     bad+=bool(errs)
-                from .conformance import exhaustive_finite_laws
+                from .conformance import exhaustive_finite_laws, exhaustive_bounded_laws
                 for name,errs in exhaustive_finite_laws().items():
                     print(f"exhaustive laws {name}: {'ok' if not errs else 'FAIL '+str(errs)}")
+                    bad+=bool(errs)
+                for name,errs in exhaustive_bounded_laws().items():
+                    print(f"bounded laws {name}: {'ok' if not errs else 'FAIL '+str(errs)}")
                     bad+=bool(errs)
                 if any(d.name=='main' for d in prog.decls):
                     ok,outs=differential(src,rest[1:])

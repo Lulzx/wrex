@@ -334,6 +334,31 @@ def to_tropical(s,mode):
         return (out,('if',s[1],c1,c2))
     raise NotNormal(f"tropical {k}")
 
+def render_ast(e):
+    if isinstance(e,N.Lit): return str(e.value)
+    if isinstance(e,N.Var): return e.name
+    if isinstance(e,N.CtorExpr): return e.name
+    if isinstance(e,N.BinOp): return f"({render_ast(e.l)} {e.op} {render_ast(e.r)})"
+    if isinstance(e,N.Unary): return f"({e.op} {render_ast(e.e)})"
+    if isinstance(e,N.If): return f"({render_ast(e.cond)} ? {render_ast(e.then)} : {render_ast(e.els)})"
+    if isinstance(e,N.Call): return f"{getattr(e.f,'name','?')}({', '.join(render_ast(a) for a in e.args)})"
+    if isinstance(e,N.TupleExpr): return "("+", ".join(render_ast(a) for a in e.items)+")"
+    return type(e).__name__
+
+def render_sym(s,names=()):
+    k=s[0]
+    if k=='var': return names[s[1]] if s[1] < len(names) and names[s[1]] else f"s{s[1]}"
+    if k=='nleaf': return s[1]
+    if k=='leaf': return render_ast(s[1])
+    if k=='inf': return "inf" if s[1]>0 else "-inf"
+    if k=='proj': return f"{render_sym(s[1],names)}[{s[2]}]"
+    if k=='bin': return f"({render_sym(s[2],names)} {s[1]} {render_sym(s[3],names)})"
+    if k=='un': return f"({s[1]}{render_sym(s[2],names)})"
+    if k=='if': return f"({render_sym(s[1],names)} ? {render_sym(s[2],names)} : {render_sym(s[3],names)})"
+    if k=='call': return f"{s[1]}({', '.join(render_sym(x,names) for x in s[2])})"
+    if k=='tuple': return "("+", ".join(render_sym(x,names) for x in s[1])+")"
+    return k
+
 # ---------- Certificate
 class Cert:
     def __init__(self,kind,family,scope,**kw):
@@ -341,6 +366,19 @@ class Cert:
         self.__dict__.update(kw)
         self.cost=family.cost; self.dim=family.dim
     def describe(self): return self.family.describe()
+    def describe_rho(self):
+        args=", ".join(getattr(self,'input_names',None) or ["x"])
+        k=self.kind
+        if k in ('F0','F1','F3'):
+            rendered=[render_sym(c,getattr(self,'state_names',())) for c in self.coeffs]
+            body=rendered[0] if k=='F0' else "("+", ".join(rendered)+")"
+            return f"ρ({args}) = {body}"
+        if k=='F2':
+            return f"ρ({args}) = {self.family.semiring} matrix from input coefficients"
+        if k=='F4': return f"ρ({args}) = tabulated transition over {len(getattr(self,'qvalues',[]))} states"
+        if k=='F5': return f"ρ({args}) = control table; payload {self.payload.describe_rho()}"
+        if k=='F6': return " × ".join(s.describe_rho() for s in self.subs)
+        return f"ρ({args})"
     # scope-local state values list <-> family state
     def rho_env(self,interp,env,idx,step):
         kind=self.kind
@@ -602,6 +640,7 @@ def infer_step(step_node,state_ty,input_ty,fns,types,finite_ctx,reassoc=False):
     if isinstance(cert,Cert):
         cert.state_skel=skel; cert.flat_tys=tys; cert.state_names=names
         cert.step_node=step_node; cert.input_pat=pats[1]; cert.reassoc=bool(reassoc and any(t=='f64' for t in tys))
+        _in=[]; pattern_names(pats[1],_in); cert.input_names=_in
     return cert
 
 # ---------- tree contexts
