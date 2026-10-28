@@ -1,8 +1,12 @@
 """C backend (spec 13.4): emit standalone C for a certified fold/scan.
 
 The generated program implements the three-phase blocked scan / balanced
-fold of spec Section 8 with pthreads, using the same rho/compose/ev of the
-certificate. Protocol on stdin: free scalar parameters first (captured
+fold of spec Section 8, using the same rho/compose/ev of the certificate.
+Each worker runs LANES sub-blocks interleaved, so the composition law breaks
+the step's dependency chain even on one core. Workers are threads only when
+n is large enough to pay for them (GRAIN elements each). rho is applied as
+elements are consumed, never stored. Traps are detected after the fast pass,
+and any trap reruns the steps in order to report the first one exactly. Protocol on stdin: free scalar parameters first (captured
 function variables), then n, then n * (input fields) integers, then the
 initial state. Finite states (F4, and F5 control) are exchanged as dense
 indices into the enumerated state set (spec 6.5). Output: the fold result,
@@ -80,11 +84,81 @@ typedef long long i64;
 #define WREX_PINF ((i64)4000000000000000000LL)
 #define WREX_NINF ((i64)-4000000000000000000LL)
 static int wrex_trap_capture; _Thread_local static int wrex_trap_flag;
+static const char* wrex_trap_name[] = {"step_trap", "div_by_zero", "clamp_bounds", "step_trap"};
 static i64 wrex_sdiv(i64 a, i64 b){ if(b==0){ if(wrex_trap_capture){ wrex_trap_flag=1; return 0; } fprintf(stderr,"trap: div_by_zero\n"); exit(3);} if(a==INT64_MIN && b==-1) return INT64_MIN; return a/b; }
 static i64 wrex_smod(i64 a, i64 b){ if(b==0){ if(wrex_trap_capture){ wrex_trap_flag=1; return 0; } fprintf(stderr,"trap: div_by_zero\n"); exit(3);} if(a==INT64_MIN && b==-1) return 0; return a%b; }
-static i64 wrex_clamp(i64 v, i64 lo, i64 hi){ if(lo>hi){ if(wrex_trap_capture){ wrex_trap_flag=1; return lo; } fprintf(stderr,"trap: clamp_bounds\n"); exit(3);} return v<lo?lo:(v>hi?hi:v); }
-static i64 wrex_addinf(i64 a, i64 b){ if(a>=WREX_PINF||b>=WREX_PINF) return WREX_PINF; if(a<=WREX_NINF||b<=WREX_NINF) return WREX_NINF; __int128 r=(__int128)a+b; if(r>WREX_PINF) return WREX_PINF; if(r<WREX_NINF) return WREX_NINF; return (i64)r; }
+static i64 wrex_clamp(i64 v, i64 lo, i64 hi){ if(lo>hi){ if(wrex_trap_capture){ wrex_trap_flag=2; return lo; } fprintf(stderr,"trap: clamp_bounds\n"); exit(3);} return v<lo?lo:(v>hi?hi:v); }
+static inline i64 wrex_addinf(i64 a, i64 b){ i64 r = (i64)((unsigned long long)a + (unsigned long long)b); r = r > WREX_PINF ? WREX_PINF : r; r = r < WREX_NINF ? WREX_NINF : r; r = (a <= WREX_NINF || b <= WREX_NINF) ? WREX_NINF : r; return (a >= WREX_PINF || b >= WREX_PINF) ? WREX_PINF : r; }
 """
+
+def _is_semiring_zero(sym, semiring):
+    """True when a coefficient is statically the zero of its semiring:
+    0 for the ring, -inf for max-plus, +inf for min-plus."""
+    k = sym[0]
+    if semiring == 'ring':
+        return k == 'leaf' and isinstance(sym[1], N.Lit) and sym[1].value == 0 and not isinstance(sym[1].value, bool)
+    sign = -1 if semiring == 'maxplus' else 1
+    if k == 'inf': return sym[1] == sign
+    if k == 'call' and sym[1] in ('max', 'min'): return all(_is_semiring_zero(x, semiring) for x in sym[2])
+    return False
+
+def _bound(sym):
+    """What a coefficient can evaluate to: 'fin', '+inf', '-inf', or None
+    when it cannot be decided statically."""
+    k = sym[0]
+    if k == 'inf': return '+inf' if sym[1] > 0 else '-inf'
+    if k in ('leaf', 'nleaf', 'var'): return 'fin'
+    if k == 'call' and sym[1] in ('max', 'min'):
+        bs = [_bound(x) for x in sym[2]]
+        absorb, drop = ('+inf', '-inf') if sym[1] == 'max' else ('-inf', '+inf')
+        if absorb in bs: return absorb
+        if None in bs: return None
+        return 'fin' if 'fin' in bs else drop
+    if k == 'call' and sym[1] == 'clamp':
+        return 'fin' if all(_bound(x) == 'fin' for x in sym[2]) else None
+    if k in ('bin', 'un', 'if'):
+        subs = [x for x in sym[1:] if isinstance(x, tuple)]
+        return 'fin' if all(_bound(x) == 'fin' for x in subs) else None
+    return None
+
+def _addinf(prefix, coeffs, lines):
+    """Name of the tropical add for one element type. Wrex values are never
+    infinite: the +-inf sentinels enter only through the identity and through
+    coefficients. When every coefficient is a finite expression of the input,
+    each sum the composition forms is clamped or maximized against a finite
+    value, so a plain add gives the same result within the int64 range."""
+    if any(_bound(c) != 'fin' for c in coeffs): return "wrex_addinf"
+    lines.append(f"static inline i64 add_{prefix}(i64 a, i64 b){{ return (i64)((unsigned long long)a + (unsigned long long)b); }}")
+    return f"add_{prefix}"
+
+# Narrow storage for input fields: a [u8] input is stored as bytes, not int64.
+C_STORAGE = {'bool': ('uint8_t', 1), 'u8': ('uint8_t', 1), 'i8': ('int8_t', 1), 'u16': ('uint16_t', 2),
+             'i16': ('int16_t', 2), 'u32': ('uint32_t', 4), 'i32': ('int32_t', 4)}
+
+def _input_storage(ty):
+    """One C type wide enough for every scalar field of the input type."""
+    fields = ty[1] if isinstance(ty, tuple) and ty and ty[0] == 'tuple' else [ty]
+    if not all(isinstance(f, str) and f in C_STORAGE for f in fields): return "i64"
+    signed = any(C_STORAGE[f][0].startswith('int') for f in fields)
+    width = max(C_STORAGE[f][1] for f in fields)
+    if signed and any(C_STORAGE[f][0] == f"uint{width * 8}_t" for f in fields): width *= 2
+    if width > 4: return "i64"
+    return f"{'int' if signed else 'uint'}{width * 8}_t"
+
+CHEAP_F0 = ('+', '&', '|', '^', 'min', 'max', 'and', 'or')
+
+def _lanes(cert):
+    """Sub-blocks one worker interleaves. Interleaving pays when the step's
+    dependency chain is slower than composing; it stops paying once the lanes'
+    elements no longer fit in registers. Measured on the Appendix B loops."""
+    k = cert.kind
+    if k == 'F0' and cert.family.op in CHEAP_F0: return 1  # compose is the step
+    if k in ('F4', 'F5'): return 1  # composing tables costs far more than one step
+    size = {'F0': 1, 'FU': 1, 'F1': 2, 'F3': 3}.get(k)
+    if k == 'F2': size = cert.family.k ** 2
+    if k == 'F6': return 4
+    if size is None: return 1
+    return 8 if size <= 3 else 4 if size <= 8 else 2
 
 def _collect_coeff_syms(cert, acc):
     for c in getattr(cert, 'coeffs', []) or []: acc.append(c)
@@ -143,15 +217,25 @@ def _gen(cert, prefix, env, lines, fns, ctor_map=None):
         return T, 1
     if k == 'F3':
         a, l, h = (_csym(c, env, ctor_map=ctor_map) for c in cert.coeffs)
+        add = _addinf(prefix, cert.coeffs, lines)
         lines += [f"typedef struct {{ i64 a, l, h; }} {T};",
                   f"static {T} {idf}(void){{ {T} e = {{0, WREX_NINF, WREX_PINF}}; return e; }}",
-                  f"static {T} {cof}({T} x, {T} y){{ i64 l = wrex_addinf(x.l, y.a); l = l<y.l?y.l:l; l = l>y.h?y.h:l; i64 h = wrex_addinf(x.h, y.a); h = h>y.h?y.h:h; h = h<y.l?y.l:h; {T} e = {{wrex_addinf(x.a, y.a), l, h}}; return e; }}",
-                  f"static void {evf}({T} r, const i64* s, i64* out){{ i64 v = wrex_addinf(s[0], r.a); out[0] = v<r.l?r.l:(v>r.h?r.h:v); }}",
+                  f"static {T} {cof}({T} x, {T} y){{ i64 l = {add}(x.l, y.a); l = l<y.l?y.l:l; l = l>y.h?y.h:l; i64 h = {add}(x.h, y.a); h = h>y.h?y.h:h; h = h<y.l?y.l:h; {T} e = {{{add}(x.a, y.a), l, h}}; return e; }}",
+                  f"static void {evf}({T} r, const i64* s, i64* out){{ i64 v = {add}(s[0], r.a); out[0] = v<r.l?r.l:(v>r.h?r.h:v); }}",
                   f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e = {{{a}, {l}, {h}}}; return e; }}"]
         return T, 1
     if k == 'F2':
         kk = fam.k; n = kk + 1
+        # The constant column carries the step's additive constants. When every
+        # entry is the semiring zero, the map is linear and k x k suffices.
+        linear = all(_is_semiring_zero(cert.coeffs[i * n + kk], fam.semiring) for i in range(kk))
         coeffs = [_csym(c, env, ctor_map=ctor_map) for c in cert.coeffs]
+        used = list(cert.coeffs)
+        if linear:
+            n = kk
+            coeffs = [coeffs[i * (kk + 1) + j] for i in range(kk) for j in range(kk)]
+            used = [cert.coeffs[i * (kk + 1) + j] for i in range(kk) for j in range(kk)]
+        add = _addinf(prefix, used, lines) if fam.semiring != 'ring' else "wrex_addinf"
         flat = ", ".join(coeffs)
         if fam.semiring == 'ring':
             combine = "__int128 acc=0; for(int t=0;t<N_;t++) acc += (__int128)y.m[i][t]*x.m[t][j]; e.m[i][j]=(i64)acc;"
@@ -162,7 +246,11 @@ def _gen(cert, prefix, env, lines, fns, ctor_map=None):
         else:
             combine = "i64 acc=WREX_PINF; for(int t=0;t<N_;t++){ i64 v=wrex_addinf(y.m[i][t], x.m[t][j]); acc = v<acc?v:acc; } e.m[i][j]=acc;"
             evcombine = "i64 acc=WREX_PINF; for(int j=0;j<K_;j++){ i64 v=wrex_addinf(r.m[i][j], s[j]); acc = v<acc?v:acc; } acc = r.m[i][K_] < acc ? r.m[i][K_] : acc; out[i]=acc;"
-        combine = combine.replace("N_", str(n)); evcombine = evcombine.replace("K_", str(kk))
+        if linear:
+            evcombine = {'ring': "__int128 acc=0; for(int j=0;j<K_;j++) acc+=(__int128)r.m[i][j]*s[j]; out[i]=(i64)acc;",
+                         'maxplus': "i64 acc=WREX_NINF; for(int j=0;j<K_;j++){ i64 v=wrex_addinf(r.m[i][j], s[j]); acc = v>acc?v:acc; } out[i]=acc;",
+                         'minplus': "i64 acc=WREX_PINF; for(int j=0;j<K_;j++){ i64 v=wrex_addinf(r.m[i][j], s[j]); acc = v<acc?v:acc; } out[i]=acc;"}[fam.semiring]
+        combine = combine.replace("N_", str(n)).replace("wrex_addinf(", add + "("); evcombine = evcombine.replace("K_", str(kk)).replace("wrex_addinf(", add + "(")
         lines += [f"#define K_{prefix} {kk}", f"#define N_{prefix} {n}", f"typedef struct {{ i64 m[{n}][{n}]; }} {T};",
                   f"static {T} {idf}(void){{ {T} e; for(int i=0;i<{n};i++) for(int j=0;j<{n};j++) e.m[i][j] = (i==j) ? {1 if fam.semiring=='ring' else 0} : {'0' if fam.semiring=='ring' else ('WREX_NINF' if fam.semiring=='maxplus' else 'WREX_PINF')}; return e; }}",
                   f"static {T} {cof}({T} x, {T} y){{ {T} e; for(int i=0;i<{n};i++) for(int j=0;j<{n};j++){{ {combine} }} return e; }}",
@@ -179,8 +267,8 @@ def _gen(cert, prefix, env, lines, fns, ctor_map=None):
         lines += [f"typedef struct {{ int t[{q}]; }} {T};",
                   f"static {T} {idf}(void){{ {T} e; for(int i=0;i<{q};i++) e.t[i]=i; return e; }}",
                   f"static {T} {cof}({T} x, {T} y){{ {T} e; for(int i=0;i<{q};i++) e.t[i] = x.t[i]<0 ? -1 : y.t[x.t[i]]; return e; }}",
-                  f"static void {evf}({T} r, const i64* s, i64* out){{ int v = r.t[s[0]]; if(v<0){{ if(wrex_trap_capture){{ wrex_trap_flag=1; out[0]=s[0]; return; }} fprintf(stderr,\"trap: step_trap\\n\"); exit(3); }} out[0] = v; }}",
-                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e; for(int i=0;i<{q};i++){{ wrex_trap_capture=1; wrex_trap_flag=0; i64 v = {step_fn}(i, in); e.t[i] = wrex_trap_flag ? -1 : (int)v; wrex_trap_capture=0; }} return e; }}"]
+                  f"static void {evf}({T} r, const i64* s, i64* out){{ int v = r.t[s[0]]; if(v<0){{ if(wrex_trap_capture){{ wrex_trap_flag=3; out[0]=s[0]; return; }} fprintf(stderr,\"trap: step_trap\\n\"); exit(3); }} out[0] = v; }}",
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e; int saved = wrex_trap_flag, cap = wrex_trap_capture; wrex_trap_capture=1; for(int i=0;i<{q};i++){{ wrex_trap_flag=0; i64 v = {step_fn}(i, in); e.t[i] = wrex_trap_flag ? -1 : (int)v; }} wrex_trap_flag=saved; wrex_trap_capture=cap; return e; }}"]
         return T, 1
     if k == 'F5':
         q = len(cert.qvalues)
@@ -227,7 +315,9 @@ def _gen(cert, prefix, env, lines, fns, ctor_map=None):
                   f"static {T} {idf}(void){{ {T} e; for(int i=0;i<{q};i++){{ e.nxt[i]=i; e.pay[i]={pidf}(); }} return e; }}",
                   f"static {T} {cof}({T} x, {T} y){{ {T} e; for(int i=0;i<{q};i++){{ int q1 = x.nxt[i]; e.nxt[i] = y.nxt[q1]; e.pay[i] = {pcof}(x.pay[i], y.pay[q1]); }} return e; }}",
                   f"static void {evf}({T} r, const i64* s, i64* out){{ int q = (int)s[0]; out[0] = r.nxt[q]; {pevf}(r.pay[q], s+1, out+1); }}",
-                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e; for(int q=0;q<{q};q++){{ e.nxt[q] = {ctrl_next}; e.pay[q] = {prhof}(in, q); }} return e; }}"]
+                  f"static {T} {rhof}(const i64* in, i64 aux){{ (void)aux; {T} e; for(int q=0;q<{q};q++){{ e.nxt[q] = {ctrl_next}; e.pay[q] = {prhof}(in, q); }} return e; }}",
+                  # ev(rho(x), s) needs only the row for the current state s[0]
+                  f"static void elem_{prefix}_step(const i64* in, const i64* s, i64* out){{ int q = (int)s[0]; out[0] = {ctrl_next}; {pevf}({prhof}(in, q), s+1, out+1); }}"]
         return T, 1 + pwords
     if k == 'F6':
         subs = []
@@ -324,7 +414,7 @@ def generate_c(prog, analysis, fn_name=None):
     free = [f for f in free if f not in bound]
     for i, name in enumerate(free): env[name] = f"param[{i}]"
     nin = max(1, len(in_names))
-    lines = ["#include <stdio.h>", "#include <stdlib.h>", "#include <stdint.h>", "#include <pthread.h>", HELPERS]
+    lines = ["#include <stdio.h>", "#include <stdlib.h>", "#include <stdint.h>", "#include <pthread.h>", "#include <time.h>", HELPERS]
     if free: lines.append(f"static i64 param[{len(free)}];")
     # family declarations for FU codegen; their compose bodies may call helpers
     FAM_C.clear()
@@ -360,51 +450,93 @@ def generate_c(prog, analysis, fn_name=None):
         lines.append(f"static i64 wrex_fn_{name}({params}){{ return {_cexpr(body.expr, fenv)}; }}")
     T, words = _gen(cert, "w", env, lines, fns)
     is_scan = rec["kind"] == 'scan'
+    if not any(l.startswith("static void elem_w_step(") for l in lines):
+        lines.append("static void elem_w_step(const i64* in, const i64* s, i64* out){ elem_w_ev(elem_w_rho(in, 0), s, out); }")
     main = [f"#define NIN {nin}", f"#define WORDS {words}", f"typedef {T} Elem;",
-            "static Elem* elems; static i64* inputs; static long n;",
-            "typedef struct { long a, b; Elem acc; long trap; long blk; } Job;",
-            "static i64* outbuf; static i64* starts;",
-            "static void* replay(void* p){ Job* j = (Job*)p; i64 s[WORDS]; for(int k2 = 0; k2 < WORDS; k2++) s[k2] = starts[j->blk * WORDS + k2]; for(long i = j->a; i < j->b; i++){ i64 out[WORDS]; elem_w_ev(elems[i], s, out); if(wrex_trap_flag){ j->trap = i; wrex_trap_flag = 0; break; } for(int k2 = 0; k2 < WORDS; k2++){ s[k2] = out[k2]; outbuf[i * WORDS + k2] = out[k2]; } } return 0; }",
-            "static void* summarize(void* p){ Job* j = (Job*)p; Elem e = elem_w_ident(); for(long i=j->a;i<j->b;i++) e = elem_w_compose(e, elems[i]); j->acc = e; return 0; }",
-            "int main(int argc, char** argv){",
-            "  long p = argc > 1 ? atol(argv[1]) : 4; if(p < 1) p = 1;"]
+            "#ifndef LANES", f"#define LANES {_lanes(cert)}", "#endif",
+            "#ifndef GRAIN", "#define GRAIN 131072", "#endif",
+            f"typedef {_input_storage(rec.get('input_ty'))} In;",
+            "static In* inputs; static long n; static i64 s0[WORDS];",
+            "static long nsub; static Elem* accs; static i64* starts; static i64* outbuf;",
+            "/* widen element i's fields to i64 (free once inlined) */",
+            "static inline Elem RHO(long i){ i64 in[NIN]; for(int k = 0; k < NIN; k++) in[k] = inputs[i * NIN + k]; return elem_w_rho(in, 0); }",
+            "static inline void STEP(long i, const i64* s, i64* o){ i64 in[NIN]; for(int k = 0; k < NIN; k++) in[k] = inputs[i * NIN + k]; elem_w_step(in, s, o); }",
+            "static long sub_lo(long k){ return (long)((__int128)k * n / nsub); }",
+            "typedef struct { long k0; int trap; } Job;",
+            "/* fold each of this worker's LANES sub-blocks to one element, interleaved */",
+            "static void* summarize(void* p){ Job* j = (Job*)p; Elem acc[LANES]; long lo[LANES], len[LANES], m = -1;",
+            "  for(int l = 0; l < LANES; l++){ acc[l] = elem_w_ident(); lo[l] = sub_lo(j->k0 + l); len[l] = sub_lo(j->k0 + l + 1) - lo[l]; if(m < 0 || len[l] < m) m = len[l]; }",
+            "  for(long t = 0; t < m; t++) for(int l = 0; l < LANES; l++) acc[l] = elem_w_compose(acc[l], RHO(lo[l] + t));",
+            "  for(int l = 0; l < LANES; l++){ for(long t = m; t < len[l]; t++) acc[l] = elem_w_compose(acc[l], RHO(lo[l] + t)); accs[j->k0 + l] = acc[l]; }",
+            "  j->trap = wrex_trap_flag; wrex_trap_flag = 0; return 0; }",
+            "/* run the steps of each sub-block from its start state, interleaved */",
+            "static void* replay(void* p){ Job* j = (Job*)p; i64 st[LANES][WORDS]; long lo[LANES], len[LANES], m = -1;",
+            "  for(int l = 0; l < LANES; l++){ lo[l] = sub_lo(j->k0 + l); len[l] = sub_lo(j->k0 + l + 1) - lo[l]; if(m < 0 || len[l] < m) m = len[l]; for(int w = 0; w < WORDS; w++) st[l][w] = starts[(j->k0 + l) * WORDS + w]; }",
+            "  for(long t = 0; t < m; t++) for(int l = 0; l < LANES; l++){ long i = lo[l] + t; i64 o[WORDS]; STEP(i, st[l], o); for(int w = 0; w < WORDS; w++){ st[l][w] = o[w]; outbuf[i * WORDS + w] = o[w]; } }",
+            "  for(int l = 0; l < LANES; l++) for(long t = m; t < len[l]; t++){ long i = lo[l] + t; i64 o[WORDS]; STEP(i, st[l], o); for(int w = 0; w < WORDS; w++){ st[l][w] = o[w]; outbuf[i * WORDS + w] = o[w]; } }",
+            "  j->trap = wrex_trap_flag; wrex_trap_flag = 0; return 0; }",
+            "/* worker 0 runs on the calling thread; returns nonzero if any worker trapped */",
+            "static int run_workers(void* (*f)(void*), Job* jobs, long nw){ pthread_t th[nw > 1 ? nw - 1 : 1];",
+            "  for(long b = 1; b < nw; b++) pthread_create(&th[b - 1], 0, f, &jobs[b]);",
+            "  f(&jobs[0]); int trap = jobs[0].trap;",
+            "  for(long b = 1; b < nw; b++){ pthread_join(th[b - 1], 0); trap |= jobs[b].trap; } return trap; }",
+            "static i64 result[WORDS];",
+            "/* the steps in order from s0; returns the kind of the first trap, or 0 */",
+            "static int sequential(void){ i64 s[WORDS], o[WORDS]; for(int w = 0; w < WORDS; w++) s[w] = s0[w]; wrex_trap_flag = 0;",
+            "  for(long i = 0; i < n; i++){ STEP(i, s, o); if(wrex_trap_flag) return wrex_trap_flag; for(int w = 0; w < WORDS; w++){ s[w] = o[w];" + (" outbuf[i * WORDS + w] = o[w];" if is_scan else "") + " } }",
+            "  for(int w = 0; w < WORDS; w++) result[w] = s[w]; return wrex_trap_flag; }",
+            "/* the whole computation; returns nonzero if any step trapped */",
+            "static int compute(long p){",
+            "  long nw = n / GRAIN; if(nw > p) nw = p; if(nw < 1) nw = 1;",
+            "  nsub = nw * LANES; wrex_trap_flag = 0; wrex_trap_capture = 1;",
+            "  i64 s[WORDS], o[WORDS]; for(int w = 0; w < WORDS; w++) s[w] = s0[w];"]
+    if is_scan:
+        main += ["  if(!outbuf) outbuf = malloc(sizeof(i64) * (n > 0 ? n : 1) * WORDS);"]
+    # Vectorizing a narrow input against int64 state spends more on widening
+    # than it saves (tokenizer: 18 us vectorized, 10 us unrolled, n = 50,000).
+    narrow = _input_storage(rec.get('input_ty')) != "i64"
+    main += ["  if(nsub == 1){ /* one worker and one lane: no summaries, just the steps */",
+             ("    _Pragma(\"clang loop vectorize(disable) interleave_count(4)\")" if narrow else ""),
+             "    for(long i = 0; i < n; i++){ STEP(i, s, o); for(int w = 0; w < WORDS; w++){ s[w] = o[w];" + (" outbuf[i * WORDS + w] = o[w];" if is_scan else "") + " } }",
+             "    for(int w = 0; w < WORDS; w++) result[w] = s[w];",
+             "    return wrex_trap_flag; }",
+             "  static Job* jobs; static long cap; if(nsub > cap){ cap = nsub; accs = realloc(accs, sizeof(Elem) * cap); starts = realloc(starts, sizeof(i64) * cap * WORDS); jobs = realloc(jobs, sizeof(Job) * cap); }",
+             "  for(long b = 0; b < nw; b++){ jobs[b].k0 = b * LANES; jobs[b].trap = 0; }",
+             "  int trap = run_workers(summarize, jobs, nw);"]
+    if not is_scan:
+        main += ["  Elem total = elem_w_ident();",
+                 "  for(long k = 0; k < nsub; k++) total = elem_w_compose(total, accs[k]);",
+                 "  elem_w_ev(total, s, result); return trap | wrex_trap_flag; }"]
+    else:
+        main += ["  /* the start state of each sub-block is the prefix of summaries before it */",
+                 "  Elem prefix = elem_w_ident();",
+                 "  for(long k = 0; k < nsub; k++){ elem_w_ev(prefix, s, starts + k * WORDS); prefix = elem_w_compose(prefix, accs[k]); }",
+                 "  return trap | wrex_trap_flag | run_workers(replay, jobs, nw); }"]
+    main += ["int main(int argc, char** argv){",
+             "  long p = argc > 1 ? atol(argv[1]) : 4; if(p < 1) p = 1;"]
     if free:
         main.append(f"  for(int i = 0; i < {len(free)}; i++){{ if(scanf(\"%lld\", &param[i]) != 1) return 1; }}")
     main += ["  if(scanf(\"%ld\", &n) != 1) return 1;",
-             "  inputs = malloc(sizeof(i64) * (n > 0 ? n : 1) * NIN);",
-             "  for(long i = 0; i < n * NIN; i++){ if(scanf(\"%lld\", &inputs[i]) != 1) return 1; }",
-             "  elems = malloc(sizeof(Elem) * (n > 0 ? n : 1));",
-             "  for(long i = 0; i < n; i++) elems[i] = elem_w_rho(inputs + i * NIN, 0);",
-             "  i64 s0[WORDS]; for(int i = 0; i < WORDS; i++){ if(scanf(\"%lld\", &s0[i]) != 1) return 1; }"]
-    if not is_scan:
-        main += ["  Elem total = elem_w_ident();",
-                 "  if(n > 0){ long blocks = p < n ? p : n;",
-                 "    pthread_t* th = malloc(sizeof(pthread_t) * blocks); Job* jobs = malloc(sizeof(Job) * blocks);",
-                 "    for(long b = 0; b < blocks; b++){ jobs[b].a = b * n / blocks; jobs[b].b = (b + 1) * n / blocks; pthread_create(&th[b], 0, summarize, &jobs[b]); }",
-                 "    for(long b = 0; b < blocks; b++){ pthread_join(th[b], 0); total = elem_w_compose(total, jobs[b].acc); }",
-                 "    free(th); free(jobs); }",
-                 "  i64 out[WORDS]; elem_w_ev(total, s0, out);",
-                 "  for(int i = 0; i < WORDS; i++) printf(\"%s%lld\", i ? \" \" : \"\", out[i]);",
-                 "  printf(\"\\n\"); return 0; }"]
+             "  inputs = malloc(sizeof(In) * (n > 0 ? n : 1) * NIN);",
+             "  for(long i = 0; i < n * NIN; i++){ i64 v; if(scanf(\"%lld\", &v) != 1) return 1; inputs[i] = (In)v; }",
+             "  for(int i = 0; i < WORDS; i++){ if(scanf(\"%lld\", &s0[i]) != 1) return 1; }",
+             "#ifdef WREX_BENCH",
+             "  /* benchmark hook: print the fastest of WREX_BENCH runs, in ns, to stderr */",
+             "  long long best = -1; int trap = 0;",
+             "  for(int r = 0; r < WREX_BENCH && !trap; r++){ struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0); trap = compute(p); clock_gettime(CLOCK_MONOTONIC, &t1);",
+             "    long long dt = (t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec); if(best < 0 || dt < best) best = dt; }",
+             "  fprintf(stderr, \"%lld\\n\", best);",
+             "#else",
+             "  int trap = compute(p);",
+             "#endif",
+             "  /* any trap in the fast pass: redo the steps in order, which reports",
+             "     the first trap exactly or, if the trap was in a state the program",
+             "     never reaches, produces the result */",
+             "  if(trap && (trap = sequential())){ fprintf(stderr, \"trap: %s\\n\", wrex_trap_name[trap]); return 3; }"]
+    if is_scan:
+        main += ["  for(long i = 0; i < n * WORDS; i++) printf(\"%s%lld\", i ? \" \" : \"\", outbuf[i]);"]
     else:
-        main += ["  /* three-phase blocked scan (spec 8.1), all phases parallel */",
-                 "  long blocks = n > 0 ? (p < n ? p : n) : 1;",
-                 "  outbuf = malloc(sizeof(i64) * (n > 0 ? n : 1) * WORDS);",
-                 "  starts = malloc(sizeof(i64) * blocks * WORDS);",
-                 "  Elem prefix = elem_w_ident();",
-                 "  if(n > 0){ pthread_t* th = malloc(sizeof(pthread_t) * blocks); Job* jobs = malloc(sizeof(Job) * blocks);",
-                 "    for(long b = 0; b < blocks; b++){ jobs[b].a = b * n / blocks; jobs[b].b = (b + 1) * n / blocks; pthread_create(&th[b], 0, summarize, &jobs[b]); }",
-                 "    for(long b = 0; b < blocks; b++){ pthread_join(th[b], 0); elem_w_ev(prefix, s0, starts + b * WORDS); prefix = elem_w_compose(prefix, jobs[b].acc); }",
-                 "    free(th); free(jobs); }",
-                 "  /* phase 3: parallel replay per block from its start state */",
-                 "  if(n > 0){ pthread_t* th = malloc(sizeof(pthread_t) * blocks); Job* jobs = malloc(sizeof(Job) * blocks);",
-                 "    wrex_trap_capture = 1;",
-                 "    for(long b = 0; b < blocks; b++){ jobs[b].a = b * n / blocks; jobs[b].b = (b + 1) * n / blocks; jobs[b].blk = b; jobs[b].trap = -1; pthread_create(&th[b], 0, replay, &jobs[b]); }",
-                 "    long first_trap = -1;",
-                 "    for(long b = 0; b < blocks; b++){ pthread_join(th[b], 0); if(jobs[b].trap >= 0 && (first_trap < 0 || jobs[b].trap < first_trap)) first_trap = jobs[b].trap; } wrex_trap_capture = 0;",
-                 "    free(th); free(jobs);",
-                 "    if(first_trap >= 0){ fprintf(stderr, \"trap: step_trap\\n\"); return 3; } }",
-                 "  for(long i = 0; i < n; i++) for(int j = 0; j < WORDS; j++) printf(\"%s%lld\", (i || j) ? \" \" : \"\", outbuf[i * WORDS + j]);",
-                 "  printf(\"\\n\"); return 0; }"]
+        main += ["  for(int i = 0; i < WORDS; i++) printf(\"%s%lld\", i ? \" \" : \"\", result[i]);"]
+    main += ["  printf(\"\\n\"); return 0; }"]
     src = f"/* generated by wrex codegen: {rec['kind']} in fn {rec['fn']} ({cert.describe()}); state words = {words} */\n"
     return src + "\n".join(lines) + "\n" + "\n".join(main) + "\n"

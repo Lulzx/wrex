@@ -1,0 +1,62 @@
+{
+ "n": 50000,
+ "agree": true,
+ "seconds": {
+  "Wrex Seq": {
+   "prefix_sum": 0.0794157080235891,
+   "linear_recurrence": 0.1349644169677049,
+   "saturating_counters": 0.11946879199240357,
+   "tokenizer": 0.4332588749821298,
+   "viterbi": 0.34951204201206565
+  },
+  "Wrex Par": {
+   "prefix_sum": 0.12885974999517202,
+   "linear_recurrence": 0.26922241697320715,
+   "saturating_counters": 0.28707158297766,
+   "tokenizer": 2.1524558340315707,
+   "viterbi": 0.7523328330134973
+  },
+  "Wrex generated C": {
+   "prefix_sum": 1.1e-05,
+   "linear_recurrence": 2.2e-05,
+   "saturating_counters": 4.6e-05,
+   "tokenizer": 1.1e-05,
+   "viterbi": 4.2e-05
+  },
+  "C": {
+   "prefix_sum": 1.1e-05,
+   "linear_recurrence": 4.5e-05,
+   "saturating_counters": 6.2e-05,
+   "tokenizer": 9e-06,
+   "viterbi": 4.8e-05
+  },
+  "Rust": {
+   "prefix_sum": 1.2708e-05,
+   "linear_recurrence": 5.0041e-05,
+   "saturating_counters": 6.2625e-05,
+   "tokenizer": 5.1791e-05,
+   "viterbi": 4.4125e-05
+  },
+  "Go": {
+   "prefix_sum": 1.3291e-05,
+   "linear_recurrence": 4.7167e-05,
+   "saturating_counters": 5.8291e-05,
+   "tokenizer": 5.3459e-05,
+   "viterbi": 7.9166e-05
+  },
+  "Java": {
+   "prefix_sum": 1.4333e-05,
+   "linear_recurrence": 5.1875e-05,
+   "saturating_counters": 7.8625e-05,
+   "tokenizer": 3.8167e-05,
+   "viterbi": 4.3e-05
+  },
+  "Python": {
+   "prefix_sum": 0.000690416,
+   "linear_recurrence": 0.001006166,
+   "saturating_counters": 0.00198675,
+   "tokenizer": 0.0015475,
+   "viterbi": 0.00260575
+  }
+ }
+}
