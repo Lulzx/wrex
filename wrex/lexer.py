@@ -1,7 +1,7 @@
 import re
 from dataclasses import dataclass
 
-KEYWORDS = {"fn","type","let","if","then","else","match","treefold","true","false","and","or","not"}
+KEYWORDS = {"fn","type","let","if","then","else","match","treefold","true","false","and","or","not","family"}
 class LexError(Exception): pass
 
 @dataclass

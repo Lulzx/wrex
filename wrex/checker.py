@@ -42,7 +42,11 @@ BUILTIN_FNS={}  # handled specially
 
 class Checker:
     def __init__(self,prog):
-        self.prog=prog; self.types={}; self.ctors={}; self.fns={}; self.subst={}
+        self.prog=prog; self.types={}; self.ctors={}; self.fns={}; self.families={}; self.subst={}
+        for d in prog.decls:
+            if isinstance(d,N.FamilyDecl):
+                if d.name in self.families: raise CheckError(f"duplicate family {d.name}")
+                self.families[d.name]=d
         for d in prog.decls:
             if isinstance(d,N.TypeDecl):
                 self.types[d.name]=d.variants
@@ -50,6 +54,8 @@ class Checker:
         for d in prog.decls:
             if isinstance(d,N.FnDecl): self.fns[d.name]=d
     def check(self):
+        for d in self.prog.decls:
+            if isinstance(d,N.FamilyDecl): self.check_family(d)
         for d in self.prog.decls:
             if isinstance(d,N.FnDecl): self.check_fn(d)
         # default unresolved numeric type variables to `int` (spec 3: unsuffixed literals take type from context)
@@ -68,6 +74,12 @@ class Checker:
                                     if isinstance(z,N.Node): fix(z)
         fix(self.prog)
         return self.prog
+    def check_family(self,d):
+        sty=resolve(d.state_ty,self.subst)
+        it=self.check_expr(d.identity,{})
+        unify(it,sty,self.subst,f"identity of family {d.name}")
+        self.check_lambda(d.compose,[sty,sty],sty,{})
+        d.state_ty=resolve(sty,self.subst)
     def check_fn(self,d):
         self.cur_fn=d; env={n:t for n,t in d.params}
         self.check_block(d.body,env,d.ret)
@@ -120,6 +132,8 @@ class Checker:
                 return tn
             if e.name in self.fns:
                 d=self.fns[e.name]; return ('fn',[t for _,t in d.params],d.ret)
+            if e.name in self.families:
+                d=self.families[e.name]; return ('fn',[d.state_ty,d.state_ty],d.state_ty)
             raise CheckError(f"line {e.line}: undefined name {e.name!r}")
         if isinstance(e,N.CtorExpr):
             if e.name not in self.ctors: raise CheckError(f"line {e.line}: unknown constructor {e.name}")

@@ -24,6 +24,7 @@ class Interpreter:
                 for c,f in d.variants: self.ctors[c]=(d.name,f)
         self.output=[]; self.certificates={}  # id(node)->cert, filled by compiler
         self.ctx_certs={}; self.fn_stack=[]; self.seq_fns=set(); self.annotations={}
+        self.user_families={}  # name -> UserMonoid, filled by compiler (spec 6.8)
         self._plans=None
     # ---------- patterns
     def match_pattern(self,pat,val,env):
@@ -103,13 +104,18 @@ class Interpreter:
             if e.name in env: return env[e.name]
             if e.name in self.ctors and not self.ctors[e.name][1]:
                 return ADT(e.name,(),self.ctors[e.name][0])
-            if e.name in self.fns: 
+            if e.name in self.fns:
                 d=self.fns[e.name]
                 # first-class fn ref as closure-like: wrap
                 interp=self
                 class FnRef:
                     def __call__(self,*a): return interp.call_fn(e.name,a)
                 return FnRef()
+            if e.name in self.user_families:
+                fam=self.user_families[e.name]
+                class FamRef:
+                    def __call__(self,*a): return fam.compose(a[0],a[1])
+                return FamRef()
             raise Trap("name",f"undefined {e.name}",e.line)
         if isinstance(e,N.CtorExpr):
             vals=[self.eval_expr(a,env) for a in e.args]
@@ -180,6 +186,8 @@ class Interpreter:
                 return self.eval_builtin(name,e,env)
             if name in self.fns:
                 args=[self.eval_expr(a,env) for a in e.args]; return self.call_fn(name,args)
+            if name in self.user_families:
+                args=[self.eval_expr(a,env) for a in e.args]; return self.user_families[name].compose(args[0],args[1])
         f=self.eval_expr(e.f,env); args=[self.eval_expr(a,env) for a in e.args]
         return self.call_value(f,args,e.line)
     def eval_builtin(self,name,e,env):

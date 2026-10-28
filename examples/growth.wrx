@@ -1,0 +1,5 @@
+family growth over int identity 0: (a, b) => a + b + a * b
+fn f(xs: [int]) -> int:
+    fold(xs, 0, (s, x) => growth(s, x))
+fn main(args: [Str]) -> Out:
+    print(f([1, 2, 3]))

@@ -1,7 +1,7 @@
 # Wrex Language Specification
 
-**Version:** 0.7
-**Status:** Implemented. The reference implementation covers Sections 1–14: parser, type checker, reference interpreter, representation inference for F0–F6, CPU plans, tree contraction, the tinygrad backend, a C code generator for certified folds and scans in all families F0-F6, and GPU tree contraction for F1 contexts (see the repository README for the exact backend coverage and remaining gaps).
+**Version:** 0.9
+**Status:** Implemented. The reference implementation covers Sections 1–14: parser, type checker, reference interpreter, representation inference for F0–F6 and user-defined families (Section 6.8), CPU plans, tree contraction, the tinygrad backend, a C code generator for certified folds and scans in families F0-F6 and user families, and GPU tree contraction for F0/F1/F3/F2 contexts (see the repository README for the exact backend coverage and remaining gaps).
 
 ---
 
@@ -99,7 +99,8 @@ A family is useful only if it is closed under `⋄` and its elements stay small.
 
 ```ebnf
 program     = { decl } ;
-decl        = typedecl | fndecl ;
+decl        = typedecl | fndecl | familydecl ;
+familydecl  = "family" name "over" type "identity" expr ":" lambda ;
 
 typedecl    = "type" TypeName "=" variant { "|" variant } ;
 variant     = Ctor [ "(" type { "," type } ")" ] ;
@@ -351,6 +352,18 @@ This is a wreath product of `R` with the transformation monoid of `Q`. It covers
 ```
 
 Components within a sub-tuple that depend on each other linearly are handled by F2 instead. Components that depend on each other in other ways (aside from finite control in F5) are not representable.
+
+### 6.8 FU: User-defined monoids (since 0.8; C and tree contexts since 0.9)
+
+A program may declare its own monoid on a state type:
+
+```
+family growth over int identity 0: (a, b) => a + b + a * b
+```
+
+The declaration names an operator `growth : (S, S) -> S` with identity `0`. It defines a representation with `R = S`, `r1 ⋄ r2 = growth(r1, r2)`, `ι` the declared identity, and `ev(r, s) = growth(s, r)`. A step of the form `(s, x) => growth(s, g(x))` (state first, second argument state-free) then has `ρ(x) = g(x)`, and L3 holds by construction. User families participate in F6 products, as F5 payloads, and as tree-fold contexts (0.9); the C backend emits their compose and identity as C (0.9), while the GPU backend — whose tensors cannot express an arbitrary user operator — falls back to exact CPU plans.
+
+Unlike the built-in families, whose laws are proven once, a user family's laws are **machine-checked at declaration time** before any certificate is issued: exhaustively over every value when the state domain has at most 20 values, otherwise by checking the identity law on edge and seeded-random values and associativity on 800 seeded-random triples. A family that traps during checking, or fails any check, is rejected: folds using it receive an obstruction naming the counterexample, run sequentially, and the operator remains callable as an ordinary function so sequential semantics is unchanged. Families over `f64` are not admitted. This discharges open question 4 for monoid-shaped families without a proof assistant; mechanized proofs remain future work, and `wrex explain` states how each family was checked.
 
 ---
 
@@ -816,8 +829,8 @@ The contribution Wrex aims to make is the combination: representation inference 
 1. **Inference completeness.** For which classes of step functions is the search in Section 7 complete? A characterization for F1–F3 relative to the normal forms should be achievable.
 2. **Representation size versus benefit.** F4 always applies to finite state, but tables of 256 entries may never pay off. Should the compiler stop searching above a cost threshold?
 3. **Nested parallelism.** How should a parallel scan whose step contains its own fold be scheduled? A flattening transformation is likely needed. (Version 0.5 adopts an interim rule: the outer plan owns the parallelism, and folds inside a step being evaluated by a parallel plan run sequentially.)
-4. **User-defined families.** Could users supply new families together with mechanized proofs of their laws, without enlarging the trusted base?
-5. **Floating point.** What should a `reassoc` annotation promise, and how should its error bound be expressed and checked?
+4. **User-defined families.** Could users supply new families together with mechanized proofs of their laws, without enlarging the trusted base? (Version 0.8 admits user-defined monoids whose laws are machine-checked at declaration time, exhaustively on small domains; mechanized proofs, and families with `R` different from `S`, remain open.)
+5. **Floating point.** What should a `reassoc` annotation promise, and how should its error bound be expressed and checked? (Version 0.8 states the first-order Higham bound for balanced pairing, `|error| <= ceil(log2 n) * 2^-53 * sum |terms|`, in `wrex explain`; a checked, per-program bound remains open.)
 6. **GPU contraction.** Tree contraction relies on pointer-based random mating. Could a level-synchronous variant over node arrays be expressed as tinygrad gathers and still be competitive?
 7. **Kernel fusion.** How many kernels does tinygrad produce for the up-sweep/down-sweep scan of each family, and would a single custom scan kernel per family be worth the added trusted code?
 

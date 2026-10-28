@@ -36,7 +36,10 @@ def cmd_explain(path,workers=8):
                 print(f"  family      {c.describe()}   (dimension {c.dim}, ⋄ cost {c.cost})")
                 print(f"  {c.describe_rho()}")
                 print(f"  L3          {c.l3}")
-                if getattr(c,'reassoc',False): print("  warning     @reassoc: floating-point plans reassociate and are outside the plan-independence guarantee (spec 11)")
+                if c.kind=='FU': print(f"  note        user family '{c.family.fam_name}': {c.family.law_status}; GPU backend falls back to CPU plans")
+                if getattr(c,'reassoc',False):
+                    print("  warning     @reassoc: floating-point plans reassociate and are outside the plan-independence guarantee (spec 11)")
+                    print("  error bound balanced pairing depth ceil(log2(max(n,1))): |error| <= ceil(log2(max(n,1))) * 2^-53 * sum of |terms| to first order (Higham); Seq remains exact")
                 th=_threshold(rec,workers)
                 plan='ParScan' if rec['kind']=='scan' else 'ParFold'
                 if th: print(f"  plan        {plan} when n >= {th} on {workers} workers, else Seq")

@@ -258,6 +258,86 @@ class TestInferenceCompleteness(unittest.TestCase):
         for name, errs in exhaustive_finite_laws().items():
             self.assertEqual(errs, [], name)
 
+class TestUserFamilies(unittest.TestCase):
+    """User-defined families (spec 6.8): laws are machine-checked at the
+    declaration; certified folds parallelize, rejected ones stay sequential
+    and exact."""
+    GROWTH = ("family growth over int identity 0: (a, b) => a + b + a * b\n"
+              "fn f(xs: [int]) -> int:\n    fold(xs, 0, (s, x) => growth(s, x))\n"
+              "fn main(args: [Str]) -> Out:\n    print(f([1, 2, 3]))\n")
+    def test_user_family_fold_all_plans(self):
+        prog, ck, an = compile_source(self.GROWTH)
+        self.assertEqual(an.records[0]["cert"].kind, "FU")
+        for plan in ("seq", "par", "auto"):
+            self.assertEqual(run(self.GROWTH, plan), "23")
+    def test_user_family_scan_and_product(self):
+        src = ("family growth over int identity 0: (a, b) => a + b + a * b\n"
+               "fn f(xs: [int]) -> (int, int):\n    fold(xs, (0, 0), ((s, n), x) => (growth(s, x), n + 1))\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([1, 2, 3]))\n")
+        prog, ck, an = compile_source(src)
+        self.assertEqual(an.records[0]["cert"].kind, "F6")
+        for plan in ("seq", "par", "auto"):
+            self.assertEqual(run(src, plan), "(23, 3)")
+    def test_user_family_exhaustive_bool(self):
+        src = ("family bxor over bool identity false: (a, b) => a != b\n"
+               "fn f(xs: [bool]) -> bool:\n    fold(xs, false, (s, x) => bxor(s, x))\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([true, true, false]))\n")
+        prog, ck, an = compile_source(src)
+        self.assertEqual(an.records[0]["cert"].kind, "FU")
+        self.assertIn("exhaustive", an.records[0]["cert"].family.law_status)
+        for plan in ("seq", "par"):
+            self.assertEqual(run(src, plan), "false")
+    def test_rejected_family_stays_sequential_and_exact(self):
+        src = ("family sub over int identity 0: (a, b) => a - b\n"
+               "fn f(xs: [int]) -> int:\n    fold(xs, 0, (s, x) => sub(s, x))\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([1, 2]))\n")
+        prog, ck, an = compile_source(src)
+        self.assertIn("obs", an.records[0])
+        self.assertIn("rejected", an.records[0]["obs"].reason)
+        for plan in ("seq", "par", "auto"):
+            self.assertEqual(run(src, plan), "-3")
+    def test_nonassociative_family_rejected(self):
+        src = ("family weird over int identity 0: (a, b) => if a == 0 then b else if b == 0 then a else a - b\n"
+               "fn f(xs: [int]) -> int:\n    fold(xs, 0, (s, x) => weird(s, x))\n"
+               "fn main(args: [Str]) -> Out:\n    print(f([1, 2]))\n")
+        prog, ck, an = compile_source(src)
+        self.assertIn("obs", an.records[0])
+        self.assertIn("associativity", an.records[0]["obs"].reason)
+    def test_user_family_c_codegen(self):
+        import subprocess, os, tempfile
+        from wrex.codegen import generate_c
+        prog, ck, an = compile_source(self.GROWTH)
+        csrc = generate_c(prog, an, "f")
+        with tempfile.TemporaryDirectory() as d:
+            cpath, binpath = os.path.join(d, "out.c"), os.path.join(d, "out")
+            with open(cpath, "w") as fh: fh.write(csrc)
+            r = subprocess.run(["cc", "-O2", "-o", binpath, cpath], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            r = subprocess.run([binpath, "4"], input="3 1 2 3 0", capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.strip(), "23")
+    def test_user_family_tree_contexts(self):
+        src = ("family growth over int identity 0: (a, b) => a + b + a * b\n"
+               "type E = Leaf(int) | Inc(E) | Twice(E)\n"
+               "fn f(e: E) -> int:\n    treefold e:\n        Leaf(n) => n\n        Inc(a) => growth(a, 1)\n        Twice(a) => growth(a, 2)\n"
+               "fn main(args: [Str]) -> Out:\n    print(f(Inc(Twice(Leaf(3)))))\n")
+        prog, ck, an = compile_source(src)
+        self.assertEqual(an.records[0]["cert"].family.name, "FU")
+        for plan in ("seq", "par", "auto"):
+            self.assertEqual(run(src, plan), "23")
+    def test_reassoc_error_bound_in_explain(self):
+        import io, contextlib, tempfile, os
+        from wrex.cli import cmd_explain
+        src = ("@reassoc\nfn total(xs: [f64]) -> f64:\n    fold(xs, 0.0, (s, x) => s + x)\n"
+               "fn main(args: [Str]) -> Out:\n    print(total([1.0]))\n")
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "r.wrx")
+            with open(p, "w") as fh: fh.write(src)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cmd_explain(p)
+        self.assertIn("2^-53", buf.getvalue())
+
 class TestBench(unittest.TestCase):
     def test_bench_all_plans_agree(self):
         from wrex.bench import run_bench

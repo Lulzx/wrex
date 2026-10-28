@@ -42,10 +42,24 @@ class Parser:
 
     def parse_decl(self):
         if self.peek().kind=='type': return self.parse_typedecl()
+        if self.peek().kind=='family': return self.parse_familydecl()
         anns=[]
         while self.peek().kind=='@':
             self.next(); anns.append('@'+self.expect('NAME').val)
         return self.parse_fndecl(anns)
+
+    def parse_familydecl(self):
+        # family Name over Type identity Expr: (a, b) => Expr
+        t=self.expect('family'); name=self.expect('NAME').val
+        kw=self.expect('NAME')
+        if kw.val!='over': raise ParseError(f"line {kw.line}: expected 'over' in family declaration")
+        sty=self.parse_type()
+        kw2=self.expect('NAME')
+        if kw2.val!='identity': raise ParseError(f"line {kw2.line}: expected 'identity' in family declaration")
+        ident=self.parse_expr(); self.expect(':')
+        comp=self.parse_lambda()
+        if len(comp.params)!=2: raise ParseError(f"line {t.line}: family compose must take two parameters")
+        return N.FamilyDecl(name=name,state_ty=sty,identity=ident,compose=comp,line=t.line)
 
     def parse_typedecl(self):
         t=self.expect('type'); name=self.expect('NAME').val

@@ -20,6 +20,8 @@ class CodegenError(Exception): pass
 
 # Wrex user function name -> generated C function name, for coefficient calls
 FN_C = {}
+# Family name -> FamilyDecl, populated by generate_c for FU codegen
+FAM_C = {}
 
 def _cexpr(e, env, ctor_map=None):
     if isinstance(e, N.Lit):
@@ -92,6 +94,32 @@ def _collect_coeff_syms(cert, acc):
 
 def _gen(cert, prefix, env, lines, fns, ctor_map=None):
     """Emit element type/functions for a certificate. Returns (type, state words)."""
+    if cert.kind == 'FU':
+        # emit the declared compose/identity as C; ev(r, s) = op(s, r)
+        d = FAM_C.get(cert.family.fam_name)
+        if d is None: raise CodegenError(f"C backend: family '{cert.family.fam_name}' declaration not found")
+        if not all(isinstance(p, N.PVar) for p in d.compose.params):
+            raise CodegenError(f"C backend: family '{d.name}' compose parameters must be simple names")
+        opf = f"fam_{prefix}_op"
+        senv = {d.compose.params[0].name: "a", d.compose.params[1].name: "b"}
+        stmts = []
+        body = d.compose.body
+        if isinstance(body, N.Block):
+            for pat, e in body.bindings:
+                if not isinstance(pat, N.PVar): raise CodegenError(f"C backend: family '{d.name}' compose let pattern must be a simple name")
+                stmts.append(f"i64 {pat.name} = {_cexpr(e, senv, ctor_map)};"); senv[pat.name] = pat.name
+            stmts.append(f"return {_cexpr(body.expr, senv, ctor_map)};")
+        else:
+            stmts.append(f"return {_cexpr(body, senv, ctor_map)};")
+        ident = _cexpr(d.identity, {}, ctor_map)
+        g = _csym(cert.coeffs[0], env, ctor_map=ctor_map)
+        lines += [f"static i64 {opf}(i64 a, i64 b){{ " + " ".join(stmts) + " }",
+                  f"typedef i64 Elem_{prefix};",
+                  f"static Elem_{prefix} elem_{prefix}_ident(void){{ return {ident}; }}",
+                  f"static Elem_{prefix} elem_{prefix}_compose(Elem_{prefix} x, Elem_{prefix} y){{ return {opf}(x, y); }}",
+                  f"static void elem_{prefix}_ev(Elem_{prefix} r, const i64* s, i64* out){{ out[0] = {opf}(s[0], r); }}",
+                  f"static Elem_{prefix} elem_{prefix}_rho(const i64* in, i64 aux){{ (void)aux; return {g}; }}"]
+        return f"Elem_{prefix}", 1
     T = f"Elem_{prefix}"; fam = cert.family; k = cert.kind
     idf, cof, evf, rhof = f"elem_{prefix}_ident", f"elem_{prefix}_compose", f"elem_{prefix}_ev", f"elem_{prefix}_rho"
     if k == 'F0':
@@ -298,6 +326,10 @@ def generate_c(prog, analysis, fn_name=None):
     nin = max(1, len(in_names))
     lines = ["#include <stdio.h>", "#include <stdlib.h>", "#include <stdint.h>", "#include <pthread.h>", HELPERS]
     if free: lines.append(f"static i64 param[{len(free)}];")
+    # family declarations for FU codegen; their compose bodies may call helpers
+    FAM_C.clear()
+    for d in prog.decls:
+        if isinstance(d, N.FamilyDecl): FAM_C[d.name] = d
     # emit scalar user functions referenced by coefficients (e.g. is_alpha)
     FN_C.clear()
     called = []
@@ -315,6 +347,8 @@ def generate_c(prog, analysis, fn_name=None):
             elif isinstance(x, list):
                 for y in x: find_calls_sym(y)
     for s in syms: find_calls_sym(s)
+    for d in prog.decls:
+        if isinstance(d, N.FamilyDecl): find_calls(d.compose)
     for name in called:
         d = fns[name]; FN_C[name] = f"wrex_fn_{name}"
     for name in called:

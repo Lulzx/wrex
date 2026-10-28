@@ -139,9 +139,10 @@ def enum_values(ty,types,interp_types=None):
 
 # ---------- AST -> Sym
 class SymBuilder:
-    def __init__(self,state_vars,coeff_names):
+    def __init__(self,state_vars,coeff_names,user_ops=()):
         self.state_vars=state_vars  # name->global comp idx
         self.coeff_names=set(coeff_names)
+        self.user_ops=set(user_ops)
     def build_block(self,blk,local):
         local=dict(local)
         for pat,e in blk.bindings:
@@ -185,6 +186,8 @@ class SymBuilder:
                 arm=self.build_block(blk,local2)
                 result=arm if cond is None else ('if',cond,arm,result if result is not None else arm)
             return result if result is not None else ('unsupported',e)
+        if isinstance(e,N.Call) and isinstance(e.f,N.Var) and e.f.name in self.user_ops and len(e.args)==2:
+            return ('umonoid',e.f.name,self.build(e.args[0],local),self.build(e.args[1],local))
         if isinstance(e,N.Call) and isinstance(e.f,N.Var) and e.f.name in ('min','max','clamp'):
             return ('call',e.f.name,[self.build(a,local) for a in e.args],e.ty)
         if isinstance(e,N.TupleExpr): return ('tuple',[self.build(x,local) for x in e.items])
@@ -369,6 +372,8 @@ class Cert:
     def describe_rho(self):
         args=", ".join(getattr(self,'input_names',None) or ["x"])
         k=self.kind
+        if k=='FU':
+            return f"ρ({args}) = {render_sym(self.coeffs[0],getattr(self,'state_names',()))}  (via user family '{self.family.fam_name}')"
         if k in ('F0','F1','F3'):
             rendered=[render_sym(c,getattr(self,'state_names',())) for c in self.coeffs]
             body=rendered[0] if k=='F0' else "("+", ".join(rendered)+")"
@@ -382,6 +387,8 @@ class Cert:
     # scope-local state values list <-> family state
     def rho_env(self,interp,env,idx,step):
         kind=self.kind
+        if kind=='FU':
+            return eval_sym(interp,self.coeffs[0],env,{})
         if kind in ('F0','F1','F2','F3'):
             vals=[eval_sym(interp,c,env,{}) for c in self.coeffs]
             if kind=='F0': return vals[0]
@@ -416,7 +423,7 @@ class Cert:
     def ev_state(self,elem,comp_list):
         """comp_list: values aligned with self.scope -> new values aligned with scope"""
         kind=self.kind
-        if kind in ('F0','F1','F3'): return [self.family.ev(elem,comp_list[0])]
+        if kind in ('F0','F1','F3','FU'): return [self.family.ev(elem,comp_list[0])]
         if kind=='F2': return list(self.family.ev(elem,tuple(comp_list)))
         if kind=='F4':
             q=comp_list[0] if len(comp_list)==1 else tuple(comp_list)
@@ -457,13 +464,69 @@ def _l3_for(kind):
     return {'F0':"discharged by ring normalization",'F1':"discharged by ring normalization",
             'F2':"discharged by ring normalization",'F3':"discharged by lattice normalization",
             'F4':"holds by construction (tabulation)",'F5':"construction for control; payload checked per control state",
-            'F6':"discharged componentwise"}[kind]
+            'F6':"discharged componentwise",
+            'FU':"holds by construction (ev(rho(x), s) is the step); family laws machine-checked at declaration"}[kind]
 
-def infer_numeric_group(syms,scope,tys,names,trap_reason,reassoc=False):
+def verify_user_family(name,sty,ident,compose_fn,types):
+    """Machine-check a user family's laws (spec 6.8). Returns (ok, info).
+
+    Exhaustive when the state domain has at most 20 values; otherwise the
+    identity law is checked on edge + seeded-random values and
+    associativity on seeded-random triples. Any trap or mismatch rejects
+    the family: folds using it get an obstruction, never a wrong plan.
+    """
+    import random as _random
+    if sty=="f64":
+        return False, f"user family '{name}': f64 state is not admitted (floating-point composition is not associative, spec 11)"
+    vals=enum_values(sty,types) if isinstance(sty,str) else []
+    exhaustive=0 < len(vals) <= 20
+    if not exhaustive:
+        rnd=_random.Random(20260)
+        if sty=="bool": vals=[False,True]; exhaustive=True
+        elif sty=="int": vals=[-100,-7,-2,-1,0,1,2,3,7,100]+[rnd.randint(-50,50) for _ in range(30)]
+        elif isinstance(sty,str) and sty in __import__('wrex.values',fromlist=['MACHINE']).MACHINE:
+            from .values import MACHINE, wrap
+            bits,signed=MACHINE[sty]; lo=-(1<<(bits-1)) if signed else 0; hi=(1<<(bits-1))-1 if signed else (1<<bits)-1
+            vals=[wrap(v,sty) for v in (lo,lo+1,-1,0,1,2,hi-1,hi)]+[wrap(rnd.randint(lo,hi),sty) for _ in range(24)]
+        elif vals: vals=vals[:40]
+        else: return False, f"user family '{name}': cannot enumerate or sample the state type {sty}; family not admitted"
+    def op(a,b):
+        r=compose_fn(a,b)
+        return r
+    try:
+        for s in vals:
+            if op(ident,s)!=s or op(s,ident)!=s:
+                return False, f"user family '{name}' rejected: identity fails for state {s!r} (op(e, s) and op(s, e) must both be s)"
+        if exhaustive:
+            triples=((a,b,c) for a in vals for b in vals for c in vals)
+            status=f"laws exhaustive over {len(vals)} values"
+        else:
+            rnd=_random.Random(77003)
+            triples=((rnd.choice(vals),rnd.choice(vals),rnd.choice(vals)) for _ in range(800))
+            status=f"laws tested on {len(vals)} values, 800 triples (seeded)"
+        for a,b,c in triples:
+            if op(op(a,b),c)!=op(a,op(b,c)):
+                return False, f"user family '{name}' rejected: associativity fails for (a, b, c) = ({a!r}, {b!r}, {c!r})"
+    except Trap as t:
+        return False, f"user family '{name}' rejected: compose traps during law checks ({t.kind}: {t.msg})"
+    return True, status
+
+def infer_numeric_group(syms,scope,tys,names,trap_reason,reassoc=False,user_families=None,rejected_families=None):
+    user_families=user_families or {}; rejected_families=rejected_families or {}
     if trap_reason: return Obstruction(trap_reason+" (numeric families rejected before simplification, spec 7.3)")
     if any(t=="f64" for t in tys) and not reassoc: return Obstruction("`f64` state: floating-point arithmetic is not associative, so no family applies (Section 11). Add @reassoc to opt into reassociated floating-point plans, which leave the plan-independence guarantee.")
     if len(scope)==1:
         i=scope[0]; s=syms[0]; ty=tys[0]
+        # FU: user-defined monoid (spec 6.8); state must be the first argument
+        if s[0]=='umonoid':
+            fname,a,b=s[1],s[2],s[3]
+            if fname in rejected_families: return Obstruction(rejected_families[fname])
+            if a!=('var',i) or sym_vars(b):
+                return Obstruction(f"step uses user family '{fname}' with the state not as a state-free first argument; write {fname}(state, g(input))")
+            if fname not in user_families: return Obstruction(f"unknown user family '{fname}'")
+            famobj=user_families[fname]
+            if str(getattr(famobj,'ty',ty))!=str(ty): return Obstruction(f"user family '{fname}' is over {famobj.ty}, but the state component is {ty}")
+            c=Cert('FU',famobj,scope,coeffs=[b]); c.l3=_l3_for('FU'); return c
         # F0
         fam=None; g=None
         if s[0]=='bin' and s[1] in ('+','*','&','|','^','and','or'):
@@ -533,11 +596,11 @@ def make_f4(scope,tys,types,finite_ctx):
     else: qvalues=enum_values(('tuple',tys),types)
     c=Cert('F4',F.F4(qvalues),scope,qvalues=qvalues); c.l3=_l3_for('F4'); return c
 
-def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False):
+def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False,user_families=None,rejected_families=None):
     finite=[is_finite_type(t,types,finite_ctx) for t in tys]
     # numeric attempt when no user/bool control types present (bool handled by F0 too)
     if not any(finite) or all(isinstance(t,str) and (t in ("int","f64") or t in __import__('wrex.values',fromlist=['MACHINE']).MACHINE) for t in tys):
-        r=infer_numeric_group(syms,scope,tys,names,trap_reason,reassoc)
+        r=infer_numeric_group(syms,scope,tys,names,trap_reason,reassoc,user_families,rejected_families)
         if isinstance(r,Cert): return r
         if all(finite):
             f4=make_f4(scope,tys,types,finite_ctx)
@@ -545,7 +608,7 @@ def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False)
         return r
     if all(finite):
         # try cheap numeric for single bool/int control (e.g. bool with and/or)
-        r=infer_numeric_group(syms,scope,tys,names,None,reassoc) if len(scope)==1 and tys[0]=="bool" else None
+        r=infer_numeric_group(syms,scope,tys,names,None,reassoc,user_families,rejected_families) if len(scope)==1 and tys[0]=="bool" else None
         if isinstance(r,Cert): return r
         return make_f4(scope,tys,types,finite_ctx)
     # mixed control + payload (F5)
@@ -557,10 +620,10 @@ def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False)
             return Obstruction(f"The control state `{names[scope[k]] or 'state'}` depends on the numeric state `{names[list(deps)[0]] or 'state'}`. Finite-control families require the control state to depend only on itself and the input.")
     mapping={scope[k]:('nleaf',names[scope[k]]) for k in ctrl}
     pay_syms=[remap_sym(syms[k],mapping) for k in pay]
-    payload=infer_group(pay_syms,pay_scope,[tys[k] for k in pay],names,types,finite_ctx,trap_reason,reassoc)
+    payload=infer_group(pay_syms,pay_scope,[tys[k] for k in pay],names,types,finite_ctx,trap_reason,reassoc,user_families,rejected_families)
     if not isinstance(payload,Cert): return payload
-    if payload.kind not in ('F0','F1','F2','F3','F6'):
-        return Obstruction(f"payload family {payload.kind} is not admitted in F5 (spec 6.6 allows F0-F3 and F6)")
+    if payload.kind not in ('F0','F1','F2','F3','F6','FU'):
+        return Obstruction(f"payload family {payload.kind} is not admitted in F5 (spec 6.6 allows F0-F3, F6 and FU)")
     ctrl_tys=[tys[k] for k in ctrl]
     if len(ctrl_scope)==1: qvalues=enum_values(ctrl_tys[0],types)
     else: qvalues=enum_values(('tuple',ctrl_tys),types)
@@ -570,7 +633,7 @@ def infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False)
            ctrl_names=[names[scope[k]] for k in ctrl],qvalues=qvalues)
     c.payload_scope=pay_scope; c.l3=_l3_for('F5'); return c
 
-def infer_groups(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False):
+def infer_groups(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False,user_families=None,rejected_families=None):
     # connected components of dependency graph
     parent=list(range(len(scope)))
     def find(a):
@@ -586,10 +649,10 @@ def infer_groups(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc=False
     groups={}
     for k in range(len(scope)): groups.setdefault(find(k),[]).append(k)
     if len(groups)==1:
-        return infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc)
+        return infer_group(syms,scope,tys,names,types,finite_ctx,trap_reason,reassoc,user_families,rejected_families)
     subs=[]
     for ks in groups.values():
-        r=infer_group([syms[k] for k in ks],[scope[k] for k in ks],[tys[k] for k in tys and ks],names,types,finite_ctx,trap_reason,reassoc)
+        r=infer_group([syms[k] for k in ks],[scope[k] for k in ks],[tys[k] for k in tys and ks],names,types,finite_ctx,trap_reason,reassoc,user_families,rejected_families)
         if not isinstance(r,Cert):
             if all(is_finite_type(t,types,finite_ctx) for t in tys):
                 return make_f4(scope,tys,types,finite_ctx)
@@ -604,7 +667,7 @@ def pattern_names(pat,out):
     elif isinstance(pat,(N.PTuple,N.PCtor)):
         for p in pat.items: pattern_names(p,out)
 
-def infer_step(step_node,state_ty,input_ty,fns,types,finite_ctx,reassoc=False):
+def infer_step(step_node,state_ty,input_ty,fns,types,finite_ctx,reassoc=False,user_families=None,rejected_families=None):
     """Returns Cert or Obstruction."""
     if isinstance(step_node,N.Var) and step_node.name in fns:
         d=fns[step_node.name]; params=d.params
@@ -618,7 +681,7 @@ def infer_step(step_node,state_ty,input_ty,fns,types,finite_ctx,reassoc=False):
     flat=[]; skel=flatten_pattern(pats[0],state_ty,flat,None)
     state_vars={name:i for i,(name,_) in enumerate(flat) if name}
     names=[n for n,_ in flat]; tys=[t for _,t in flat]
-    builder=SymBuilder(state_vars,())
+    builder=SymBuilder(state_vars,(),user_ops=set(user_families or {})|set(rejected_families or {}))
     bodysym=builder.build_block(body,{}) if isinstance(body,N.Block) else builder.build(body,{})
     def flatten_sym(skel,s):
         if skel[0]=='leaf': return [s]
@@ -636,7 +699,7 @@ def infer_step(step_node,state_ty,input_ty,fns,types,finite_ctx,reassoc=False):
     syms=flatten_sym(skel,bodysym)
     if syms is None or len(syms)!=len(flat): return Obstruction("step does not return a state of the expected shape")
     trap_reason=trap_state_dependent(step_node,state_vars.keys())
-    cert=infer_groups(syms,list(range(len(flat))),tys,names,types,finite_ctx,trap_reason,reassoc)
+    cert=infer_groups(syms,list(range(len(flat))),tys,names,types,finite_ctx,trap_reason,reassoc,user_families,rejected_families)
     if isinstance(cert,Cert):
         cert.state_skel=skel; cert.flat_tys=tys; cert.state_names=names
         cert.step_node=step_node; cert.input_pat=pats[1]; cert.reassoc=bool(reassoc and any(t=='f64' for t in tys))
@@ -644,7 +707,8 @@ def infer_step(step_node,state_ty,input_ty,fns,types,finite_ctx,reassoc=False):
     return cert
 
 # ---------- tree contexts
-def infer_treefold(node,types,fns):
+def infer_treefold(node,types,fns,user_families=None,rejected_families=None):
+    user_families=user_families or {}; rejected_families=rejected_families or {}
     """Returns (ctx Cert-like or None, obstruction or None). Cert per (ctor,pos)."""
     T=node.scrut.ty; V=node.ty
     if not isinstance(T,str) or T not in types: return None,Obstruction("treefold scrutinee is not an algebraic type")
@@ -666,7 +730,7 @@ def infer_treefold(node,types,fns):
             if ft!=T: continue
             if not isinstance(p,N.PVar): return None,Obstruction(f"context for {pat.name} field {j}: recursive field is not a simple variable")
             hole=p.name
-            builder=SymBuilder({hole:0} if m==1 else {},())
+            builder=SymBuilder({hole:0} if m==1 else {},(),user_ops=set(user_families)|set(rejected_families))
             # other pattern vars are coeff leaves via Var fallback (not state vars) - good
             seed={} if m==1 else {hole:('tuple',[('var',i) for i in range(m)])}
             s=builder.build_block(blk,seed)
@@ -680,9 +744,9 @@ def infer_treefold(node,types,fns):
         # componentwise inference per context, then a forced common F2 ring form
         certs={}; compatible=True; famkey=None
         for key,syms in candidates:
-            r=infer_groups(syms,list(range(m)),vtys,[f"v{i}" for i in range(m)],types,False,None)
+            r=infer_groups(syms,list(range(m)),vtys,[f"v{i}" for i in range(m)],types,False,None,False,user_families,rejected_families)
             if not isinstance(r,Cert): compatible=False; break
-            fk=(r.kind, type(r.family).__name__, getattr(r.family,'semiring',None), getattr(r.family,'k',None), getattr(r.family,'op',None))
+            fk=(r.kind, type(r.family).__name__, getattr(r.family,'semiring',None), getattr(r.family,'k',None), getattr(r.family,'op',None), getattr(r.family,'fam_name',None))
             if famkey is None: famkey=fk
             elif fk!=famkey: compatible=False; break
             certs[key]=r
@@ -722,10 +786,12 @@ def infer_treefold(node,types,fns):
                     a,l,h=to_clamp(s); certs[key]=Cert('F3',F.F3(),[0],coeffs=[a,l,h])
                 except NotNormal: ok=False; break
             else:
-                r=infer_numeric_group([s],[0],[V],["v"],None)
+                r=infer_numeric_group([s],[0],[V],["v"],None,False,user_families,rejected_families)
                 if not isinstance(r,Cert): ok=False; break
                 certs[key]=r
         if ok:
+            keys={(c.kind, getattr(c.family,'fam_name',None), getattr(c.family,'op',None)) for c in certs.values()}
+            if len(keys)!=1: continue
             fam=next(iter(certs.values())).family
             tc=Cert('CTX',fam,[0],per=certs); tc.l3="context L3 discharged by normalization (spec 9.2)"; return tc,None
     return None,Obstruction("an arm is not affine/clamp in a single child result, so no context representation exists")

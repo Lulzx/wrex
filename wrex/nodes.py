@@ -16,6 +16,13 @@ class TypeDecl(Node):
     variants: list = field(default_factory=list)  # [(ctor,[type,...])]
 
 @dataclass
+class FamilyDecl(Node):
+    name: str = ""
+    state_ty: Any = None
+    identity: Any = None  # expr
+    compose: Any = None  # Lambda with 2 params
+
+@dataclass
 class FnDecl(Node):
     name: str = ""
     params: list = field(default_factory=list)  # [(name,type)]

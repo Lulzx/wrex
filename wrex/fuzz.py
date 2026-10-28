@@ -11,7 +11,7 @@ def _data(rnd, n, lo=-9, hi=9): return [rnd.randint(lo, hi) for _ in range(n)]
 
 def gen_case(rnd):
     kind = rnd.choice(["affine_fold", "affine_scan", "sum_fold", "clamp_scan", "tropical",
-                       "match_fold", "degree2_fold", "finite_fold", "pair_fold"])
+                       "match_fold", "degree2_fold", "finite_fold", "pair_fold", "user_family_fold"])
     n = rnd.randint(0, 12)
     data = _data(rnd, n)
     lit = "[" + ", ".join(str(v) for v in data) + "]"
@@ -50,6 +50,12 @@ def gen_case(rnd):
         src = ("type Light = Red | Green\nfn f(xs: [int]) -> Light:\n    fold(xs, Red, (s, x) => if x > 0 then Green else Red)\n"
                f"fn main(args: [Str]) -> Out:\n    print(f({lit}))\n")
         return src, None
+    if kind == "user_family_fold":
+        small = [max(-3, min(3, v)) for v in data[:8]]
+        lit2 = "[" + ", ".join(str(v) for v in small) + "]"
+        src = ("family growth over int identity 0: (a, b) => a + b + a * b\n"
+               f"fn f(xs: [int]) -> int:\n    fold(xs, 0, (s, x) => growth(s, x))\nfn main(args: [Str]) -> Out:\n    print(f({lit2}))\n")
+        return src, ("fold", small, 0)
     src = (f"fn f(xs: [int]) -> (int, int):\n    fold(xs, (0, 1), ((a, b), x) => (a + x, b * {rnd.randint(1,3)}))\n"
            f"fn main(args: [Str]) -> Out:\n    print(f({lit}))\n")
     return src, None

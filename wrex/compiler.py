@@ -20,10 +20,40 @@ def _walk(node,fn,visit):
                     for z in y:
                         if isinstance(z,N.Node): _walk(z,fn,visit)
 
+def build_user_families(prog,checker):
+    """Evaluate family declarations and machine-check their laws (spec 6.8).
+
+    Returns (families, rejected, ops): certified name -> UserMonoid,
+    name -> rejection reason, and every declared name -> callable operator.
+    """
+    from . import families as F
+    from .inference import verify_user_family
+    from .interp import Closure
+    from .values import Trap
+    types={d.name:d.variants for d in prog.decls if isinstance(d,N.TypeDecl)}
+    families={}; rejected={}; ops={}
+    decls=[d for d in prog.decls if isinstance(d,N.FamilyDecl)]
+    if not decls: return families,rejected,ops
+    interp=Interpreter(prog)
+    for d in decls:
+        sty=resolve(d.state_ty,checker.subst)
+        try: ident=interp.eval_expr(d.identity,{})
+        except Trap as t: rejected[d.name]=f"user family '{d.name}' rejected: identity traps ({t.kind}: {t.msg})"; continue
+        clo=Closure(d.compose,{},interp)
+        fn=lambda a,b,clo=clo,interp=interp: interp.call_value(clo,(a,b))
+        # every declared family stays callable as an ordinary operator, so
+        # sequential fallback evaluates the step exactly as written
+        ops[d.name]=F.UserMonoid(d.name,show(sty),ident,fn,"unchecked")
+        ok,info=verify_user_family(d.name,sty,ident,fn,types)
+        if ok: families[d.name]=F.UserMonoid(d.name,show(sty),ident,fn,info)
+        else: rejected[d.name]=info
+    return families,rejected,ops
+
 def analyze(prog,checker):
     fns={d.name:d for d in prog.decls if isinstance(d,N.FnDecl)}
     types={d.name:d.variants for d in prog.decls if isinstance(d,N.TypeDecl)}
     analysis=Analysis()
+    analysis.user_families,analysis.rejected_families,analysis.family_ops=build_user_families(prog,checker)
     subst=checker.subst
     for d in prog.decls:
         if not isinstance(d,N.FnDecl): continue
@@ -32,13 +62,13 @@ def analyze(prog,checker):
             if isinstance(node,N.Call) and isinstance(node.f,N.Var) and node.f.name in ('fold','scan') and len(node.args)==3:
                 xt=resolve(node.args[0].ty,subst); st=resolve(node.args[1].ty,subst)
                 xt_el=xt[1] if isinstance(xt,tuple) and xt and xt[0]=='list' else None
-                r=infer_step(node.args[2],st,xt_el,fns,types,finite,reassoc)
+                r=infer_step(node.args[2],st,xt_el,fns,types,finite,reassoc,analysis.user_families,analysis.rejected_families)
                 rec={"kind":node.f.name,"line":node.line,"node":node,"fn":d.name,"state_ty":st,"input_ty":xt_el}
                 if isinstance(r,Cert): rec["cert"]=r
                 else: rec["obs"]=r
                 analysis.records.append(rec)
             elif isinstance(node,N.TreeFold):
-                ctx,obs=infer_treefold(node,types,fns)
+                ctx,obs=infer_treefold(node,types,fns,analysis.user_families,analysis.rejected_families)
                 rec={"kind":"treefold","line":node.line,"node":node,"fn":d.name,"state_ty":resolve(node.scrut.ty,subst),"result_ty":resolve(node.ty,subst)}
                 if ctx is not None: rec["cert"]=ctx
                 else: rec["obs"]=obs
@@ -61,6 +91,7 @@ def compile_source(src):
 
 def make_interpreter(prog,analysis,config=None):
     interp=Interpreter(prog,config or Config())
+    interp.user_families=dict(getattr(analysis,'family_ops',None) or getattr(analysis,'user_families',{}) or {})
     for d in prog.decls:
         if isinstance(d,N.FnDecl):
             interp.annotations[d.name]=d.annotations

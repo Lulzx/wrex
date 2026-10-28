@@ -167,6 +167,29 @@ class F5(Family):
         return (q2,self.payload.ev(m,v))
     def describe(self): return f"F5 finite control (|Q|={len(self.q)}) with payload {self.payload.describe()}"
 
+class UserMonoid(Family):
+    """User-defined monoid family (spec 6.8, v0.8): R = S, ev(r, s) = op(s, r).
+
+    Laws are machine-checked by the compiler before any certificate is
+    issued (see inference.verify_user_family); this class only evaluates.
+    `compose_fn` is a Python callable (a, b) -> op(a, b); `ident` is the
+    declared identity value. Trap propagation follows F0: the earliest
+    TrapMark wins, and ev on a TrapMark raises it.
+    """
+    name="FU"
+    def __init__(self,fam_name,ty,ident,compose_fn,law_status="law-tested"):
+        self.fam_name=fam_name; self.ty=ty; self._ident=ident
+        self._fn=compose_fn; self.law_status=law_status
+        self.cost=2; self.dim=1
+    def identity(self): return self._ident
+    def compose(self,r1,r2):
+        t=trap_compose(r1,r2)
+        return t if t else self._fn(r1,r2)
+    def ev(self,r,s):
+        if isinstance(r,TrapMark): raise Trap(r.kind,r.msg)
+        return self._fn(s,r)
+    def describe(self): return f"FU user family '{self.fam_name}' over {self.ty} ({self.law_status})"
+
 class F6(Family):
     name="F6"
     def __init__(self,subs,spans):
