@@ -3,141 +3,281 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Performance — Wrex</title>
+<title>Performance - Wrex</title>
 <style>
-  :root { --ink:#24211d; --muted:#6d675e; --line:#e3ded4; --accent:#9a3b26; --par:#7a7264; --seq:#c9c2b4; }
+  :root {
+    --paper: #fbfaf5;
+    --ink: #1f1c18;
+    --body: #3b362e;
+    --muted: #756e62;
+    --line: #e4dfd3;
+    --soft: #f3f0e8;
+    --accent: #a13d26;
+    --seq: #d3cbbb;
+    --par: #807767;
+    --c: #a13d26;
+    --serif: "Iowan Old Style", "Iowan", Charter, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #171512; --ink: #f1ece2; --body: #d3ccbf; --muted: #9a9284;
+      --line: #322e28; --soft: #221f1b; --accent: #e07a5f;
+      --seq: #554f47; --par: #9b9283; --c: #e07a5f;
+    }
+  }
+
   * { box-sizing: border-box; }
-  body { margin:0; color:var(--ink); background:#fff; font:16px/1.55 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif; }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 0 20px 64px; }
-  header { border-bottom: 1px solid var(--line); margin-bottom: 28px; }
-  header .wrap { padding-top: 18px; padding-bottom: 14px; display:flex; justify-content:space-between; align-items:baseline; }
-  .brand { font-family: Georgia, "Times New Roman", serif; font-size: 22px; color: var(--ink); text-decoration:none; }
-  nav a { color: var(--muted); text-decoration:none; margin-left:18px; font-size:14px; }
-  nav a:hover { color: var(--accent); }
-  h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: 34px; margin: 8px 0 12px; }
-  h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: 22px; margin: 38px 0 8px; }
-  h3 { font-size: 15px; margin: 26px 0 8px; }
-  p, li { color:#3d382f; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--body); font: 16px/1.6 var(--sans); }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+
+  header { border-bottom: 1px solid var(--line); }
+  header .wrap { display: flex; justify-content: space-between; align-items: baseline; padding-top: 18px; padding-bottom: 14px; }
+  .brand { font: 600 21px/1 var(--serif); color: var(--ink); text-decoration: none; }
+  nav a { color: var(--muted); text-decoration: none; margin-left: 20px; font-size: 14px; }
+  nav a:hover, nav a[aria-current] { color: var(--ink); }
+
+  h1, h2 { font-family: var(--serif); font-weight: 400; color: var(--ink); }
+  h1 { font-size: 40px; line-height: 1.15; margin: 56px 0 18px; }
+  h2 { font-size: 25px; line-height: 1.25; margin: 64px 0 12px; }
+  h3 { font: 600 15px/1.35 var(--sans); color: var(--ink); margin: 0; }
+  .lede { font-size: 18px; }
+  p { margin: 0 0 14px; }
   .muted { color: var(--muted); font-size: 14px; }
-  code { font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; background:#f5f2ec; padding: 1px 4px; }
-  pre { background:#f5f2ec; padding: 12px 14px; overflow-x:auto; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; }
-  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 14px; }
-  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); }
-  th:first-child, td:first-child { text-align: left; }
-  th { color: var(--muted); font-weight: 600; }
-  .chart { margin: 10px 0 4px; }
-  .row { display: grid; grid-template-columns: 168px 1fr 74px; gap: 10px; align-items: center; margin: 5px 0; font-size: 13px; }
-  .row .name { color: var(--muted); text-align: right; }
-  .row .t { font-family: ui-monospace, Menlo, Consolas, monospace; }
-  .bar { height: 14px; min-width: 2px; }
-  .b-seq { background: var(--seq); } .b-par { background: var(--par); } .b-c { background: var(--accent); }
-  .legend { display:flex; gap:18px; font-size:13px; color:var(--muted); margin: 14px 0 4px; flex-wrap: wrap; }
-  .sw { display:inline-block; width:11px; height:11px; margin-right:6px; vertical-align:-1px; }
-  .note { border: 1px solid var(--line); padding: 12px 14px; margin: 18px 0; font-size: 14px; }
-  @media (max-width: 560px) { .row { grid-template-columns: 104px 1fr 66px; } }
-  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  strong { color: var(--ink); font-weight: 600; }
+  code { font: 0.86em/1.4 var(--mono); background: var(--soft); padding: 1px 4px; border-radius: 3px; color: var(--ink); }
+  pre { background: var(--soft); border-radius: 6px; padding: 16px 18px; overflow-x: auto; font: 13px/1.65 var(--mono); color: var(--ink); margin: 14px 0; }
+  pre .c { color: var(--muted); }
+  a { color: var(--accent); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 13px; color: var(--muted); margin: 36px 0 6px; }
+  .legend > span { display: inline-flex; align-items: center; gap: 8px; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .b-seq { background: var(--seq); } .b-par { background: var(--par); } .b-c { background: var(--c); }
+
+  .bench { padding: 22px 0 18px; border-top: 1px solid var(--line); }
+  .bench:last-child { border-bottom: 1px solid var(--line); }
+  .bench-head { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  .law { font-size: 13px; color: var(--muted); }
+  .fam { font: 12px/1 var(--mono); color: var(--accent); margin-right: 6px; }
+  .row { display: grid; grid-template-columns: 150px 1fr 64px; gap: 12px; align-items: center; margin: 6px 0; font-size: 13px; }
+  .row .name { color: var(--muted); }
+  .track { height: 14px; display: flex; align-items: center; gap: 8px; }
+  .bar { height: 100%; min-width: 3px; border-radius: 2px; }
+  .x { font-size: 12px; color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .row .t { font: 12.5px/1 var(--mono); text-align: right; color: var(--ink); }
+  .bench .note-line { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+
+  .table-scroll { overflow-x: auto; margin: 16px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; padding-left: 0; }
+  th:last-child, td:last-child { padding-right: 0; }
+  th { font-size: 13px; color: var(--muted); font-weight: 500; border-bottom-color: var(--ink); }
+  td { font-variant-numeric: tabular-nums; color: var(--ink); }
+  td .fam { margin: 0 0 0 4px; }
+  td.lose { color: var(--muted); }
+  td.win { color: var(--accent); }
+
+  .compare { margin: 18px 0; }
+  .cmp { display: grid; grid-template-columns: 190px 1fr; gap: 4px 28px; padding: 18px 0; border-top: 1px solid var(--line); }
+  .cmp:last-child { border-bottom: 1px solid var(--line); }
+  .cmp .wrex { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .cmp p { margin: 0; font-size: 15px; }
+
+  ul { padding-left: 20px; margin: 16px 0; }
+  li { margin: 0 0 12px; }
+  li::marker { color: var(--muted); }
+
+  .setup { margin: 32px 0; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 14px; }
+  .setup h3 { margin-bottom: 6px; }
+  .setup p { margin: 0; }
+
+  footer { border-top: 1px solid var(--line); margin-top: 72px; padding: 20px 0 48px; }
+  footer a { margin-right: 20px; }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 34px; margin-top: 40px; }
+    h2 { margin-top: 48px; }
+    .row { grid-template-columns: 92px 1fr 56px; gap: 8px; }
+    .x { display: none; }
+    .cmp { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
 <header><div class="wrap">
   <a class="brand" href="index.html">Wrex</a>
-  <nav><a href="index.html">Handbook</a><a href="https://github.com/Lulzx/wrex">GitHub</a></nav>
+  <nav><a href="index.html">Handbook</a><a href="performance.html" aria-current="page">Performance</a><a href="https://github.com/Lulzx/wrex">GitHub</a></nav>
 </div></header>
-<div class="wrap">
+
+<main class="wrap">
 
 <h1>Performance</h1>
 
-<p>Even though most benchmarks aren’t worth the pixels they’re printed on, people
-seem to like them, so here are a few. Ours come with one twist: every plan shown
-here is required to produce the <em>identical</em> result, bit for bit, including
-which trap fires first — and the harness checks that before it reports any time.
-A faster plan that answers differently is not a faster plan; it is a different
-program.</p>
+<p class="lede">This page tries to answer a fairly narrow question: if you write a
+program once in Wrex, how fast does it run under each of the ways Wrex knows how to
+execute it? There are three of them: the reference interpreter running the program
+step by step, the same interpreter running the parallel plan, and the C code that
+<code>wrex codegen</code> produces. Further down, I also try to estimate what it would
+take to get the same parallel behavior by hand in other languages, since that is the
+comparison most people deciding whether to use Wrex actually care about.</p>
+<p>One rule applies to every number here. A plan’s timing only counts if its output is
+identical to the reference, down to the bits and down to which trap fires first.
+<code>wrex bench</code> checks this before printing anything. A fast plan that gives a
+different answer is a bug, so it doesn’t get a time.</p>
 
 <div class="legend">
-  <span><span class="sw b-seq"></span>Seq — reference interpreter</span>
-  <span><span class="sw b-par"></span>Par — parallel plan, still in the interpreter</span>
-  <span><span class="sw b-c"></span>Generated C — <code>wrex codegen</code>, pthreads, 8 workers</span>
+  <span><span class="sw b-seq"></span>Seq: reference interpreter</span>
+  <span><span class="sw b-par"></span>Par: parallel plan, still in the interpreter</span>
+  <span><span class="sw b-c"></span>Generated C: <code>wrex codegen</code>, pthreads</span>
 </div>
-<p class="muted">Shorter bars are better. Each chart is scaled to its own slowest bar.
-Loops use n = 50,000 elements; times are the best of repeated runs, and full
-reproduction commands are at the bottom of the page.</p>
+<p class="muted">To read the charts: a longer bar means more wall time, and each chart is
+scaled so that its slowest plan fills the full width. Every figure is the minimum over
+several runs, and the commands to regenerate all of them are at the bottom of the page.</p>
 
-<h3>Prefix sum — F0, direct monoid (<code>s + x</code>)</h3>
-<div class="chart">
-  <div class="row"><span class="name">Seq</span><div class="bar b-seq" style="width:62%"></div><span class="t">0.081s</span></div>
-  <div class="row"><span class="name">Par</span><div class="bar b-par" style="width:100%"></div><span class="t">0.131s</span></div>
-  <div class="row"><span class="name">Generated C</span><div class="bar b-c" style="width:5%"></div><span class="t">0.006s</span></div>
+<div class="benches">
+
+  <section class="bench">
+    <div class="bench-head">
+      <h3>Prefix sum</h3>
+      <span class="law"><span class="fam">F0</span>direct monoid, <code>s + x</code></span>
+    </div>
+    <div class="row"><span class="name">Seq</span><div class="track"><div class="bar b-seq" style="width:62%"></div></div><span class="t">0.081s</span></div>
+    <div class="row"><span class="name">Par</span><div class="track"><div class="bar b-par" style="width:100%"></div></div><span class="t">0.131s</span></div>
+    <div class="row"><span class="name">Generated C</span><div class="track"><div class="bar b-c" style="width:4.6%"></div><span class="x">13×</span></div><span class="t">0.006s</span></div>
+  </section>
+
+  <section class="bench">
+    <div class="bench-head">
+      <h3>Linear recurrence</h3>
+      <span class="law"><span class="fam">F1</span>affine, <code>b * rate + deposit</code></span>
+    </div>
+    <div class="row"><span class="name">Seq</span><div class="track"><div class="bar b-seq" style="width:51%"></div></div><span class="t">0.140s</span></div>
+    <div class="row"><span class="name">Par</span><div class="track"><div class="bar b-par" style="width:100%"></div></div><span class="t">0.274s</span></div>
+    <div class="row"><span class="name">Generated C</span><div class="track"><div class="bar b-c" style="width:2.9%"></div><span class="x">18×</span></div><span class="t">0.008s</span></div>
+  </section>
+
+  <section class="bench">
+    <div class="bench-head">
+      <h3>Saturating counters</h3>
+      <span class="law"><span class="fam">F3</span>shifted clamps</span>
+    </div>
+    <div class="row"><span class="name">Seq</span><div class="track"><div class="bar b-seq" style="width:41%"></div></div><span class="t">0.120s</span></div>
+    <div class="row"><span class="name">Par</span><div class="track"><div class="bar b-par" style="width:100%"></div></div><span class="t">0.289s</span></div>
+    <div class="row"><span class="name">Generated C</span><div class="track"><div class="bar b-c" style="width:2.4%"></div><span class="x">18×</span></div><span class="t">0.007s</span></div>
+  </section>
+
+  <section class="bench">
+    <div class="bench-head">
+      <h3>Tokenizer with counters</h3>
+      <span class="law"><span class="fam">F5</span>finite control, affine payload</span>
+    </div>
+    <div class="row"><span class="name">Seq</span><div class="track"><div class="bar b-seq" style="width:20%"></div></div><span class="t">0.439s</span></div>
+    <div class="row"><span class="name">Par</span><div class="track"><div class="bar b-par" style="width:100%"></div></div><span class="t">2.163s</span></div>
+    <div class="row"><span class="name">Generated C</span><div class="track"><div class="bar b-c" style="width:0.2%"></div><span class="x">110×</span></div><span class="t">0.004s</span></div>
+  </section>
+
+  <section class="bench">
+    <div class="bench-head">
+      <h3>Viterbi decoding</h3>
+      <span class="law"><span class="fam">F2</span>tropical, max-plus</span>
+    </div>
+    <div class="row"><span class="name">Seq</span><div class="track"><div class="bar b-seq" style="width:47%"></div></div><span class="t">0.352s</span></div>
+    <div class="row"><span class="name">Par</span><div class="track"><div class="bar b-par" style="width:100%"></div></div><span class="t">0.749s</span></div>
+    <div class="row"><span class="name">Generated C</span><div class="track"><div class="bar b-c" style="width:0.5%"></div><span class="x">83×</span></div><span class="t">0.004s</span></div>
+  </section>
+
+  <section class="bench">
+    <div class="bench-head">
+      <h3>Expression trees</h3>
+      <span class="law"><span class="fam">F1</span>contexts, 3,071 balanced and 3,002 list-shaped nodes</span>
+    </div>
+    <div class="row"><span class="name">Seq, balanced</span><div class="track"><div class="bar b-seq" style="width:42%"></div></div><span class="t">0.0024s</span></div>
+    <div class="row"><span class="name">Contract, balanced</span><div class="track"><div class="bar b-par" style="width:100%"></div></div><span class="t">0.0057s</span></div>
+    <div class="row"><span class="name">Seq, list-shaped</span><div class="track"><div class="bar b-seq" style="width:42%"></div></div><span class="t">0.0024s</span></div>
+    <div class="row"><span class="name">Contract, list-shaped</span><div class="track"><div class="bar b-par" style="width:100%"></div></div><span class="t">0.0057s</span></div>
+    <p class="note-line">Tree folds don’t compile to C, so both plans here (plain sequential evaluation and tree contraction) run in the interpreter.</p>
+  </section>
+
 </div>
 
-<h3>Linear recurrence — F1, affine (<code>b * rate + deposit</code>)</h3>
-<div class="chart">
-  <div class="row"><span class="name">Seq</span><div class="bar b-seq" style="width:51%"></div><span class="t">0.140s</span></div>
-  <div class="row"><span class="name">Par</span><div class="bar b-par" style="width:100%"></div><span class="t">0.274s</span></div>
-  <div class="row"><span class="name">Generated C</span><div class="bar b-c" style="width:3%"></div><span class="t">0.008s</span></div>
-</div>
-
-<h3>Saturating counters — F3, shifted clamps</h3>
-<div class="chart">
-  <div class="row"><span class="name">Seq</span><div class="bar b-seq" style="width:41%"></div><span class="t">0.120s</span></div>
-  <div class="row"><span class="name">Par</span><div class="bar b-par" style="width:100%"></div><span class="t">0.289s</span></div>
-  <div class="row"><span class="name">Generated C</span><div class="bar b-c" style="width:2%"></div><span class="t">0.007s</span></div>
-</div>
-
-<h3>Tokenizer with counters — F5, finite control with an affine payload</h3>
-<div class="chart">
-  <div class="row"><span class="name">Seq</span><div class="bar b-seq" style="width:20%"></div><span class="t">0.439s</span></div>
-  <div class="row"><span class="name">Par</span><div class="bar b-par" style="width:100%"></div><span class="t">2.163s</span></div>
-  <div class="row"><span class="name">Generated C</span><div class="bar b-c" style="width:2%"></div><span class="t">0.004s</span></div>
-</div>
-
-<h3>Viterbi decoding — tropical F2 (max-plus)</h3>
-<div class="chart">
-  <div class="row"><span class="name">Seq</span><div class="bar b-seq" style="width:47%"></div><span class="t">0.352s</span></div>
-  <div class="row"><span class="name">Par</span><div class="bar b-par" style="width:100%"></div><span class="t">0.749s</span></div>
-  <div class="row"><span class="name">Generated C</span><div class="bar b-c" style="width:2%"></div><span class="t">0.004s</span></div>
-</div>
-
-<h3>Expression trees — F1 contexts (balanced: 3,071 nodes; list-shaped: 3,002 nodes)</h3>
-<div class="chart">
-  <div class="row"><span class="name">Seq, balanced</span><div class="bar b-seq" style="width:42%"></div><span class="t">0.0024s</span></div>
-  <div class="row"><span class="name">Contract, balanced</span><div class="bar b-par" style="width:100%"></div><span class="t">0.0057s</span></div>
-  <div class="row"><span class="name">Seq, list-shaped</span><div class="bar b-seq" style="width:43%"></div><span class="t">0.0024s</span></div>
-  <div class="row"><span class="name">Contract, list-shaped</span><div class="bar b-par" style="width:100%"></div><span class="t">0.0057s</span></div>
-</div>
-<p class="muted">Tree folds do not lower to C; their two plans are sequential evaluation and tree contraction, both in the interpreter here.</p>
-
-<h2>The comparison in one table</h2>
+<h2>The loop results in one table</h2>
+<div class="table-scroll">
 <table>
-  <tr><th>Benchmark</th><th>Seq</th><th>Par / Seq</th><th>Generated C</th><th>C speedup</th></tr>
-  <tr><td>Prefix sum (F0)</td><td>0.081s</td><td>0.62×</td><td>0.006s</td><td>13×</td></tr>
-  <tr><td>Linear recurrence (F1)</td><td>0.140s</td><td>0.51×</td><td>0.008s</td><td>18×</td></tr>
-  <tr><td>Saturating counters (F3)</td><td>0.120s</td><td>0.41×</td><td>0.007s</td><td>18×</td></tr>
-  <tr><td>Tokenizer (F5)</td><td>0.439s</td><td>0.20×</td><td>0.004s</td><td>110×</td></tr>
-  <tr><td>Viterbi, tropical (F2)</td><td>0.352s</td><td>0.47×</td><td>0.004s</td><td>83×</td></tr>
+  <thead><tr><th>Benchmark</th><th>Seq</th><th>Par / Seq</th><th>Generated C</th><th>C speedup</th></tr></thead>
+  <tbody>
+  <tr><td>Prefix sum <span class="fam">F0</span></td><td>0.081s</td><td class="lose">0.62×</td><td>0.006s</td><td class="win">13×</td></tr>
+  <tr><td>Linear recurrence <span class="fam">F1</span></td><td>0.140s</td><td class="lose">0.51×</td><td>0.008s</td><td class="win">18×</td></tr>
+  <tr><td>Saturating counters <span class="fam">F3</span></td><td>0.120s</td><td class="lose">0.41×</td><td>0.007s</td><td class="win">18×</td></tr>
+  <tr><td>Tokenizer <span class="fam">F5</span></td><td>0.439s</td><td class="lose">0.20×</td><td>0.004s</td><td class="win">110×</td></tr>
+  <tr><td>Viterbi, tropical <span class="fam">F2</span></td><td>0.352s</td><td class="lose">0.47×</td><td>0.004s</td><td class="win">83×</td></tr>
+  </tbody>
 </table>
-<p class="muted">“Par / Seq” above 1.00× would mean the parallel plan won. In the Python interpreter it never does — see below. The generated C is a separate program, timed end-to-end including reading its input.</p>
+</div>
+<p class="muted">A Par / Seq ratio above 1.00× would mean the parallel plan beat the sequential one. In the Python interpreter that never happens, and the next sections explain why. The generated C runs as its own process, and its time includes reading the input.</p>
 
-<h2>Why is Wren fast? Why is Wrex… like this?</h2>
-<p>Wren’s page sorts languages into four buckets, from tree-walk interpreters up to statically typed compiled languages, and places Wren in the second bucket — bytecode — arguing that is the sweet spot for a simple implementation. Wrex spans the buckets deliberately, and the chart above is what that looks like when you measure it:</p>
+<h2>What this would take in other languages</h2>
+<p>In Wrex, each of these benchmarks is a single sequential <code>fold</code>, <code>scan</code> or <code>treefold</code>. Representation inference then works out the composition law and checks that it holds. In most other languages the sequential loop is just as short, so the interesting question is what the parallel version costs. The short answer is that it’s usually a second program, which someone has to write and verify by hand. Here is what that looks like case by case.</p>
+
+<div class="compare">
+  <div class="cmp">
+    <div><h3>Prefix sum</h3><div class="wrex">In Wrex: one <code>scan</code> (F0)</div></div>
+    <p>This is the easy case. In C, Rust or Go, the sequential version is a plain loop. For the parallel version you can either write the blocked scan yourself (summarize each block, scan the summaries, then replay) or use C++’s <code>std::inclusive_scan</code> with a parallel execution policy. In Python, <code>numpy.cumsum</code> is fast, but it only works for built-in operations like <code>+</code>.</p>
+  </div>
+  <div class="cmp">
+    <div><h3>Linear recurrence</h3><div class="wrex">In Wrex: one <code>scan</code> (F1)</div></div>
+    <p>Here things get harder. The step <code>b * rate + deposit</code> isn’t a binary operation on balances, so library scans don’t directly apply. The trick is to notice that each step is an affine map <code>(a, b)</code>, scan over those pairs with a composition rule you derive yourself, and then apply the result. That derivation is exactly what F1 is, and in C, Rust, Haskell or anything else you would be doing it by hand.</p>
+  </div>
+  <div class="cmp">
+    <div><h3>Saturating counters</h3><div class="wrex">In Wrex: one <code>scan</code> with <code>clamp</code> (F3)</div></div>
+    <p>Every mainstream language writes this as a sequential loop. There’s a tempting NumPy shortcut (<code>cumsum</code>, then clip), but it gives the wrong answer: once you’ve hit the cap, a negative delta has to count down from the cap, and the shortcut counts down from the unclipped total instead. A correct parallel version needs the shifted-clamp composition law, and I’m not aware of any standard library that provides it.</p>
+  </div>
+  <div class="cmp">
+    <div><h3>Tokenizer / word count</h3><div class="wrex">In Wrex: one state-machine <code>fold</code> (F5)</div></div>
+    <p>The sequential version is a state machine, whether you write it in C, Rust, Go, Java or Python. To parallelize it, you represent each character as a transition function over states, compose those tables, and carry the counter separately for each state. This is the approach from Mytkowicz et al., <em>Data-Parallel Finite-State Machines</em> (ASPLOS 2014), and in practice people re-implement it from scratch each time, because regex and text libraries don’t expose anything like it.</p>
+  </div>
+  <div class="cmp">
+    <div><h3>Viterbi (max-plus)</h3><div class="wrex">In Wrex: one <code>fold</code> (tropical F2)</div></div>
+    <p>Sequentially, this is a dynamic-programming loop. In parallel, you compose 3 by 3 max-plus matrices, one per step. BLAS and NumPy don’t support the tropical semiring, so you end up writing the matrix multiply by hand as well.</p>
+  </div>
+  <div class="cmp">
+    <div><h3>Expression trees</h3><div class="wrex">In Wrex: one <code>treefold</code>, contexts inferred</div></div>
+    <p>Fork-join recursion (rayon’s <code>join</code> in Rust, <code>par</code> in Haskell, goroutines in Go, ForkJoin in Java) works well as long as the tree is balanced. If the tree is shaped like a list, every one of these degenerates into a sequential walk down the spine. The fix is tree contraction (Miller and Reif) with contexts that you derive yourself, and here too, no standard library does it for you.</p>
+  </div>
+</div>
+
+<p>It’s worth being fair to the data-parallel languages here. Futhark, Halide and Accelerate all have a parallel <code>scan</code> primitive. The difference is in who is responsible for correctness: you hand them an operator and promise that it’s associative, and the compiler trusts you. Wrex goes the other way. It starts from the sequential step, infers the operator, and checks the law before parallelizing anything. If no law applies, it runs the code sequentially and tells you which subterm was responsible. You can also supply your own operators (<code>family</code> declarations, spec 6.8), and the compiler machine-checks those where they are declared.</p>
+
+<h2>Where the speed comes from, and where it doesn’t</h2>
+<p>It helps to think of Wrex as three executors that share one semantics. Each has a different cost profile, and that explains nearly everything in the charts above.</p>
 <ul>
-  <li><strong>The reference interpreter is a tree-walk interpreter</strong> — bucket one, the slow one. It exists to define the semantics, not to win benchmarks. <code>Seq</code> is its time, and it is the baseline everything else must match exactly.</li>
-  <li><strong>Parallel plans change the shape of the work, not the speed of the interpreter.</strong> A parallel scan first summarizes blocks, then replays them; in Python each of those steps costs interpreter overhead, so <code>Par</code> loses to <code>Seq</code> at n = 50,000 on every row. Wrex’s cost model knows this and, under <code>--plan=auto</code>, keeps these scans sequential. Publishing a “parallel” bar that loses is the honest version of this chart.</li>
-  <li><strong>The generated C is the compiled bucket.</strong> <code>wrex codegen</code> emits the same summaries/⋄/ev as standalone C with pthreads — all three scan phases run in parallel there — which is where the 13–110× comes from. Its time here even includes process startup and parsing 50,000 integers from stdin; at this size that I/O, not arithmetic, is most of the 4–8&nbsp;ms, which is also why 1 vs 8 workers barely differ on these rows. The interpreter numbers, by contrast, time only the call itself.</li>
-  <li><strong>Some shapes parallelize that do not look parallel.</strong> The tokenizer is a state machine — whether you are inside a word decides what the next character does — yet it carries an F5 representation, so it scans like the prefix sum. The list-shaped tree has no balanced parallelism at all, and still contracts in logarithmic rounds; at 3,000 nodes in Python, constant factors hide that, which the chart also shows.</li>
-  <li><strong>What Wrex will not do for speed:</strong> reassociate floating point (unless you opt in with <code>@reassoc</code>, accepting a stated error bound), approximate an unrepresentable step, or report the second trap because the first was in another block. The logistic-map fold in <code>examples/logistic.wrx</code> has no representation; it runs sequentially at whatever speed that is, and <code>wrex explain</code> tells you why.</li>
+  <li>The reference interpreter is a tree-walking interpreter. Its job is to define the semantics that every other plan has to match, and the <code>Seq</code> bars are its timings.</li>
+  <li>A parallel plan changes the shape of the work, but it doesn’t make the interpreter itself any faster. A parallel scan has to summarize blocks and then replay them, and in Python each of those steps pays interpreter overhead. This is why <code>Par</code> loses to <code>Seq</code> on every row at n = 50,000. It’s also why, under <code>--plan=auto</code>, the cost model keeps these scans sequential.</li>
+  <li><code>wrex codegen</code> emits the same summaries, composition and evaluation, but as standalone C with pthreads, where all three scan phases really do run in parallel. That’s where the 13 to 110× comes from. One caveat: the C times include process startup and parsing 50,000 integers from stdin. At this size, parsing the input takes up most of the 4 to 8&nbsp;ms, much more than the arithmetic, which is also why 1 worker and 8 workers come out nearly the same on these rows. The interpreter numbers, by contrast, time only the call itself.</li>
+  <li>The tokenizer is a state machine, in the sense that whether you’re currently inside a word determines what the next character does. Even so, it has an F5 representation, so it scans the same way the prefix sum does. The list-shaped tree is interesting for the opposite reason: it has no balanced parallelism at all, but it still contracts in a logarithmic number of rounds. At 3,000 nodes in Python, though, constant factors swamp that advantage, as the chart shows.</li>
+  <li>There are also things Wrex deliberately won’t do for speed. It doesn’t reassociate floating point unless you opt in with <code>@reassoc</code> and accept a stated error bound. It doesn’t approximate a step it can’t represent. And it doesn’t report a later trap just because an earlier one happened to sit in a different block. For example, the fold in <code>examples/logistic.wrx</code> has no representation, so it runs sequentially, and <code>wrex explain</code> tells you why.</li>
 </ul>
 
-<div class="note"><strong>How these were measured.</strong> Apple M4 Pro (12 cores), 24 GB RAM, Python 3.15.2, Apple clang 21, 8 workers. Loop benchmarks use the Appendix B programs in <code>benchmarks/</code> with n = 50,000 seeded-random inputs; interpreter times are the best of repeated calls with the data already in memory, and every plan’s result is compared for exact agreement before timing is reported. The C binaries are generated from the same programs, compiled <code>-O2</code>, warmed once, then timed best-of-5 as whole processes reading their input from stdin. Your numbers will differ; the ordering — and the agreement check — should not.</div>
-
-<h2>Reproduce it</h2>
-<pre>python3 -m venv .venv &amp;&amp; .venv/bin/pip install -e .
-.venv/bin/wrex bench --n=50000        # interpreter plans, agreement-checked
-.venv/bin/wrex bench --n=200 --c      # plus generated-C timings
-.venv/bin/wrex codegen benchmarks/prefix_sum.wrx --fn=prefix_sum -o ps.c
-cc -O2 -o ps ps.c                     # standalone; reads n, inputs, state on stdin</pre>
-<p class="muted">The benchmark programs are in <code>benchmarks/</code>; the harness is <code>wrex bench</code> (<code>wrex/bench.py</code>). Like the page that inspired this one: shorter bars are better, and benchmarks still aren’t worth much more than the pixels they’re printed on — unless they also prove the answers agree.</p>
-
+<div class="setup">
+  <h3>Test setup</h3>
+  <p>Everything was measured on an Apple M4 Pro (12 cores) with 24 GB of RAM, using Python 3.15.2, Apple clang 21 and 8 workers. The loop benchmarks are the Appendix B programs in <code>benchmarks/</code>, run on n = 50,000 seeded random inputs. For the interpreter, I took the fastest of several calls with the inputs already in memory, and every plan’s result was checked for exact agreement before any time was reported. The C binaries were built from the same programs with <code>-O2</code>, run once to warm up, and then timed as whole processes reading stdin (fastest of 5). On other hardware the absolute numbers will differ, but the agreement between plans should not.</p>
 </div>
+
+<h2>Run it yourself</h2>
+<pre>python3 -m venv .venv &amp;&amp; .venv/bin/pip install -e .
+.venv/bin/wrex bench --n=50000        <span class="c"># interpreter plans, agreement-checked</span>
+.venv/bin/wrex bench --n=200 --c      <span class="c"># plus generated-C timings</span>
+.venv/bin/wrex codegen benchmarks/prefix_sum.wrx --fn=prefix_sum -o ps.c
+cc -O2 -o ps ps.c                     <span class="c"># standalone, reads n, inputs, state on stdin</span></pre>
+<p class="muted">The benchmark programs live in <code>benchmarks/</code>, and the harness is <code>wrex bench</code> (<code>wrex/bench.py</code>).</p>
+
+</main>
+
+<footer><div class="wrap muted">
+  <a href="index.html">Operations Handbook</a> <a href="https://github.com/Lulzx/wrex">Source on GitHub</a>
+</div></footer>
 </body>
 </html>
